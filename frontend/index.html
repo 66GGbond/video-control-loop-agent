@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Video Control Loop Agent</title>
+    <link rel="stylesheet" href="styles.css?v=multimodal-v26" />
+  </head>
+  <body>
+    <main>
+      <header class="hero">
+        <div>
+          <p class="eyebrow"><span class="signal-dot"></span> VIDEO CONTROL SYSTEM · AGENTIC QA</p>
+          <h1>Video Control Loop Agent</h1>
+          <p class="subtitle">A quality control system for AI video generation — diagnose, plan, repair, verify.</p>
+        </div>
+        <div class="hero-actions">
+          <button class="secondary" id="reset">Reset demo</button>
+        </div>
+      </header>
+
+      <section id="project-status-panel" class="project-status-panel" aria-labelledby="project-status-title">
+        <div class="project-status-heading">
+          <div><p class="section-kicker">PROJECT STATUS</p><h2 id="project-status-title">Ready for a creative brief</h2><p id="project-status-copy">Describe the video to the Creative Agent to begin the controlled production loop.</p></div>
+          <span id="project-status-badge" class="pill purple">Brief</span>
+        </div>
+        <div class="project-status-body">
+          <ol class="project-steps" aria-label="Project stages"><li data-stage="brief" class="active"><i>01</i><span>Brief</span></li><li data-stage="context"><i>02</i><span>Context</span></li><li data-stage="plan"><i>03</i><span>Control plan</span></li><li data-stage="version"><i>04</i><span>Version</span></li><li data-stage="quality"><i>05</i><span>Quality loop</span></li></ol>
+          <div class="project-status-facts"><div><span class="label">Current version</span><strong id="project-current-version">No version yet</strong></div><div><span class="label">Latest asset</span><strong id="project-latest-asset">Awaiting input</strong></div><div><span class="label">Next action</span><strong id="project-next-action">Open Creative Agent</strong></div></div>
+          <details id="agent-execution-trace" class="agent-execution-trace">
+            <summary><span><b>Agent execution trace</b><small id="agent-execution-trace-summary">No Agent actions yet</small></span><i aria-hidden="true">⌄</i></summary>
+            <ol id="agent-execution-trace-list" class="agent-execution-trace-list"></ol>
+          </details>
+        </div>
+      </section>
+
+      <section id="plan-section" hidden>
+        <section class="goal-card">
+          <div class="goal-main"><span class="label">Agent objective</span><strong id="goal"></strong></div>
+          <div><span class="label">Recommended budget</span><strong id="budget"></strong></div>
+          <div><span class="label">Active version</span><strong id="version"></strong></div>
+        </section>
+        <p class="plan-summary"><span class="plan-summary-dot"></span><span id="plan-summary-text">Agent analyzed the brief, built a scene-specific control plan, and identified controllability risks.</span></p>
+
+        <section class="grid top-grid">
+          <article class="panel brief-panel">
+            <div class="panel-heading"><div><p class="section-kicker">02 · CONTROL PLAN</p><h2>Creative specification</h2></div><span id="planning-source" class="pill">Agent output</span></div>
+            <div class="character">
+              <div id="reference-visual" class="reference-visual" hidden><img id="reference-preview" alt="Uploaded reference image" /></div>
+              <div><span id="reference-role-label" class="reference-role">Prompt-derived constraints</span><strong id="reference-title">No reference image</strong><p id="reference-detail">The Agent will preserve the constraints extracted from your brief.</p></div>
+            </div>
+            <ol id="shots" class="shot-list"></ol>
+            <div class="plan-subsection"><span class="label">Immutable constraints</span><div id="constraint-list" class="tag-list"></div></div>
+            <div class="plan-subsection production-direction"><span class="label">Agent directorial treatment</span><div id="production-direction" class="direction-list"></div></div>
+            <div class="plan-subsection"><span class="label">Acceptance criteria</span><div id="acceptance-criteria" class="criteria-list"></div></div>
+            <div class="plan-subsection"><span class="label">Controllability risks</span><div id="risk-list" class="risk-list"></div></div>
+            <div class="plan-subsection"><span class="label">Agent generation specification</span><div id="generation-spec" class="tag-list"></div><p id="generation-spec-rationale" class="generation-spec-rationale"></p><p id="duration-plan-summary" class="duration-plan-summary"></p></div>
+          </article>
+
+        </section>
+
+        <section id="version-review-bar" class="version-review-bar" hidden>
+          <div id="quality-progress" class="quality-progress" hidden role="status" aria-live="polite">
+            <div class="quality-progress-copy"><strong>Quality Agent is analyzing the video</strong><span>Reviewing keyframes, scoring quality, and preparing a repair decision.</span></div>
+            <div class="quality-progress-track"><i id="quality-progress-fill"></i></div>
+          </div>
+          <div id="version-navigator" class="version-navigator">
+            <div class="version-nav-main"><span class="label">Version review</span><div id="version-tabs" class="version-tabs" role="tablist" aria-label="Video versions"></div></div>
+            <div class="version-nav-actions">
+              <button id="review-video-trigger" class="review-video-trigger" type="button" hidden aria-label="Play selected video">
+                <span class="review-video-thumb"><img id="review-video-thumb-image" alt="Selected video preview" hidden /><span id="review-video-thumb-fallback" aria-hidden="true">▶</span></span>
+                <span class="review-video-copy"><strong>Watch video</strong><small id="review-video-meta">Open selected version</small></span>
+              </button>
+            </div>
+          </div>
+          <div id="generation-failure" class="generation-failure" role="status" hidden>
+            <strong>Generation failed</strong>
+            <span id="generation-failure-detail"></span>
+            <small>Update the brief or settings if needed, then retry from the Creative Agent.</small>
+          </div>
+        </section>
+      </section>
+
+      <section id="evaluation-section" hidden>
+        <section class="grid top-grid">
+          <article class="panel outcome-panel">
+            <div class="panel-heading"><div><p class="section-kicker">04 · QUALITY CONTROL</p><h2>Release gate</h2></div><span class="pill">Policy controlled</span></div>
+            <div id="gate-empty" class="empty">Run the quality loop to evaluate this version.</div>
+            <div id="scores" class="scores"></div>
+            <p id="summary" class="summary"></p>
+          </article>
+          <article class="panel agent-panel">
+            <div class="panel-heading"><div><p class="section-kicker">05 · REPAIR PLANNING</p><h2>Agent decision</h2></div><span class="pill purple">Reason → Act</span></div>
+            <div id="decision" class="empty">Run the quality loop to see the Agent decision.</div>
+          </article>
+        </section>
+
+        <section class="grid bottom-grid">
+          <article class="panel">
+            <div class="panel-heading"><div><p class="section-kicker">OBSERVATION LAYER</p><h2>Bad Case evidence</h2></div><span id="observation-source" class="pill">Observe</span></div>
+            <div id="bad-cases" class="empty">No observation yet.</div>
+          </article>
+          <article class="panel log-panel">
+            <div class="panel-heading"><div><p class="section-kicker">PROJECT MEMORY</p><h2>Auditable decision log</h2></div><span class="pill">Memory</span></div>
+            <div id="log" class="timeline"><div class="empty">The log records Observe, Reason and Act as the agent works.</div></div>
+          </article>
+        </section>
+      </section>
+    </main>
+
+    <aside id="creative-agent" class="creative-agent" aria-label="Creative Agent">
+      <div class="creative-agent-header"><div><p class="section-kicker">01 · CREATIVE AGENT</p><h2>Creative Agent</h2></div><div class="creative-agent-actions"><span id="creative-agent-state" class="pill purple">Ready</span><button id="creative-agent-minimize" class="icon-button" type="button" aria-label="Minimize Creative Agent">−</button></div></div>
+      <div id="creative-agent-feed" class="creative-agent-feed">
+        <article class="agent-message agent-message-system"><span class="agent-message-label">Creative Agent</span><p id="agent-intro">Tell me the story, key action, visual style, and any constraint that cannot change. I will ask only for context that materially affects the plan.</p></article>
+        <article id="agent-user-brief" class="agent-message agent-message-user" hidden><span class="agent-message-label">Your brief</span><p id="agent-user-brief-text"></p><small id="agent-reference-note" hidden></small></article>
+        <article id="agent-context-result" class="agent-message agent-message-system" hidden><span class="agent-message-label">Context complete</span><p id="context-summary-text"></p><div id="context-tool-list" class="tag-list"></div></article>
+        <article id="context-confirmation" class="agent-message agent-message-system agent-question" hidden><span class="agent-message-label">Context needed</span><p id="context-question-detail">This detail changes a high-impact generation constraint.</p><label for="target-market">Target market or region</label><div class="context-answer-row"><input id="target-market" type="text" autocomplete="off" placeholder="e.g. Singapore, China, Australia" /><button id="confirm-context" class="primary" type="button">Continue</button></div></article>
+        <section id="agent-video-action" class="agent-action-card" hidden>
+          <div class="agent-action-heading"><span class="agent-message-label">Version action</span><span id="agent-video-status" class="pill">Awaiting video</span></div>
+          <p id="video-stage-copy" class="agent-action-copy">Start the Agent to generate V1 from the approved control plan.</p>
+          <div id="video-generation-controls" class="agent-video-actions">
+            <button id="generate-video" class="primary" type="button">Generate V1</button>
+          </div>
+          <div id="video-ready-card" class="video-ready-card" hidden>
+            <div id="video-poster" class="video-poster"><img id="video-poster-image" alt="First sampled video frame" hidden /><span id="video-poster-fallback" aria-hidden="true">▶</span></div>
+            <div class="video-ready-copy"><strong id="video-ready-name">V1 video</strong><small id="video-ready-meta">Keyframes ready for quality evaluation</small></div>
+          </div>
+          <button id="run-loop" class="primary" disabled>Run quality loop</button>
+          <div id="agent-repair-actions" class="agent-repair-actions">
+            <button id="generate-repair" class="primary" type="button" hidden>Generate repaired V2</button>
+          </div>
+        </section>
+      </div>
+      <form id="project-form" class="creative-agent-composer">
+        <label id="creative-prompt-label" for="creative-prompt">Creative brief</label>
+        <div class="brief-input-shell">
+          <div id="brief-attachments" class="brief-bottom">
+            <label class="reference-add-control" for="reference-media" title="Add reference images or MP3/WAV audio">
+              <input id="reference-media" type="file" accept="image/png,image/jpeg,image/webp,audio/mpeg,audio/mp3,audio/wav,audio/x-wav" multiple />
+              <span aria-hidden="true">+</span><strong>Reference</strong>
+            </label>
+            <div id="reference-attachment-list" class="reference-attachment-list" aria-live="polite"></div>
+          </div>
+          <div id="creative-prompt" class="creative-prompt-editor" contenteditable="true" role="textbox" aria-multiline="true" aria-labelledby="creative-prompt-label" data-placeholder="Describe the subject, key action, setting, style, and non-negotiable constraints. Type @ to reference an uploaded asset."></div>
+          <div id="reference-mention-menu" class="reference-mention-menu" role="listbox" aria-label="Reference content mentions" hidden></div>
+        </div>
+        <div class="composer-action-row"><button id="create-plan" type="submit" class="primary creative-agent-submit">Generate control plan</button><div id="repair-budget-control" class="compact-budget-control" hidden data-tooltip="修复预算：最多允许 Agent 生成多少轮修复版本"><button id="budget-decrease" type="button" aria-label="减少修复次数">−</button><output id="budget-value" aria-live="polite">2</output><button id="budget-increase" type="button" aria-label="增加修复次数">+</button></div><button id="autopilot-toggle" class="autopilot-icon" type="button" hidden aria-label="Agent autonomous mode" data-tooltip="Agent 自主代理">▶</button></div>
+      </form>
+    </aside>
+    <button id="creative-agent-toggle" class="creative-agent-toggle" type="button" aria-label="Open Creative Agent" hidden>✦ <span>Creative Agent</span></button>
+    <dialog id="video-player-dialog" class="video-player-dialog" aria-labelledby="video-player-title">
+      <div class="video-player-header">
+        <div><p class="section-kicker">VERSION PLAYBACK</p><h2 id="video-player-title">Selected video</h2></div>
+        <button id="close-video-player" class="secondary video-player-close" type="button" aria-label="Close video player">Close</button>
+      </div>
+      <video id="review-video-player" controls playsinline preload="metadata"></video>
+    </dialog>
+    <script src="app.js?v=timing-plan-v3"></script>
+  </body>
+</html>

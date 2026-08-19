@@ -1,0 +1,815 @@
+"""Zero-dependency server for the interview demo.
+
+Run with `python3 run_demo.py`, then open http://127.0.0.1:8000.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import base64
+import binascii
+import shutil
+import uuid
+from http import HTTPStatus
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import urlparse
+from urllib import request as urllib_request
+
+from .agent.planner import DeepSeekControlPlanner
+from .agent.context import ContextEnrichmentAgent
+from .agent.generation_spec import validate_brief_duration
+from .agent.prompt_compiler import PromptCompiler
+from .demo import create_empty_state, create_enriched_project_state, create_orchestrator, present
+from .domain.models import ProjectState, VersionReview
+from .tools.providers import create_video_generator
+
+
+ROOT = Path(__file__).resolve().parents[2]
+FRONTEND = ROOT / "frontend"
+RUNTIME = ROOT / ".runtime"
+# Keep the local composition payload bounded independently of any provider.
+# Adapters decide later which retained assets have a documented request path.
+MAX_REQUEST_BYTES = 64 * 1024 * 1024
+MAX_REPAIR_ITERATIONS = 5
+
+
+def load_local_env(path: Path) -> None:
+    """Load only simple KEY=VALUE entries without adding a dependency."""
+    if not path.is_file():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key in {
+            "DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "DEEPSEEK_API_BASE_URL", "ARK_API_KEY", "ARK_VISION_MODEL",
+            "ARK_VIDEO_TEXT_MODEL", "ARK_VIDEO_REFERENCE_MODEL", "VIDEO_PROVIDER",
+            "MINIMAX_API_KEY", "MINIMAX_VIDEO_MODEL", "MINIMAX_VIDEO_RESOLUTION", "MINIMAX_API_BASE_URL",
+        } and value.strip():
+            os.environ.setdefault(key, value.strip())
+
+
+load_local_env(ROOT / ".env")
+STATE = create_empty_state()
+ORCHESTRATOR = create_orchestrator()
+CONTROL_PLANNER = DeepSeekControlPlanner()
+CONTEXT_AGENT = ContextEnrichmentAgent()
+PROMPT_COMPILER = PromptCompiler()
+VIDEO_GENERATOR = create_video_generator()
+
+
+def start_user_directed_revision(original: ProjectState, instruction: str) -> ProjectState:
+    """Replan after publication without overwriting the reviewed version chain.
+
+    A published video is an immutable piece of evidence, not the end of the
+    conversation.  When the user supplies a new creative direction, the Agent
+    starts a fresh control-plan cycle for the *next* version.  The previous
+    videos, reports and decision log remain attached to the same project so a
+    reviewer can compare the before/after lineage.
+    """
+    target_market = next(
+        (
+            str(item.get("value", ""))
+            for item in original.creative_spec.enriched_context.get("facts", [])
+            if item.get("key") == "target_market"
+        ),
+        "",
+    )
+    revised_prompt = f"{original.creative_spec.source_prompt}\n\nAdditional user direction: {instruction}"
+    validate_brief_duration(revised_prompt)
+    revised = create_enriched_project_state(
+        revised_prompt,
+        original.creative_spec.reference_asset,
+        CONTROL_PLANNER,
+        CONTEXT_AGENT,
+        target_market,
+        original.creative_spec.multimodal_assets,
+    )
+
+    # Keep the version chain immutable.  The fresh state only replaces the
+    # active creative specification and its future repair budget.
+    revised.project_id = original.project_id
+    revised.current_version_id = original.current_version_id
+    revised.current_video_asset = original.current_video_asset.copy() if original.current_video_asset else None
+    revised.version_reviews = original.version_reviews
+    revised.evaluation_history = original.evaluation_history
+    revised.generation_jobs = original.generation_jobs
+    revised.latest_report = original.latest_report
+    revised.continuity_memory = original.continuity_memory
+    # Evidence for an evaluated version stays on disk for its review.  Clear
+    # the active working set so registering V(n+1) cannot delete V(n)'s frames.
+    revised.evaluation_frame_records = []
+    revised.latest_decision = None
+    revised.latest_repair_task = None
+    revised.observation_error = ""
+    revised.pending_user_direction = ""
+    revised.iterations_used = 0
+    revised.execution_mode = "collaborative"
+    revised.autopilot_paused = False
+    revised.history = [
+        *original.history,
+        *revised.history,
+        {
+            "at": "local-demo",
+            "phase": "human_approval",
+            "event": "post_publication_control_plan_revised",
+            "payload": {
+                "message": (
+                    f"User requested a creative revision after {original.current_version_id.upper()} passed the release gate. "
+                    "Agent created a new control plan for the next version; prior video evidence remains immutable."
+                ),
+            },
+        },
+    ]
+    return revised
+
+
+class DemoHandler(SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=str(FRONTEND), **kwargs)
+
+    def do_GET(self):
+        path = urlparse(self.path).path
+        if path == "/api/state":
+            return self._json(HTTPStatus.OK, present(STATE))
+        if path.startswith("/api/generated-video/"):
+            return self._serve_generated_video(path.rsplit("/", 1)[-1])
+        return super().do_GET()
+
+    def do_POST(self):
+        global STATE
+        path = urlparse(self.path).path
+        try:
+            if path == "/api/create-project":
+                payload = self._read_json()
+                prompt = str(payload.get("prompt", "")).strip()
+                if not prompt:
+                    return self._json(HTTPStatus.BAD_REQUEST, {"error": "A creative prompt is required"})
+                validate_brief_duration(prompt)
+                assets = self._normalise_multimodal_assets(payload)
+                reference_asset = next((asset for asset in assets if asset["media_type"] == "image"), None)
+                STATE = create_enriched_project_state(
+                    prompt, reference_asset, CONTROL_PLANNER, CONTEXT_AGENT,
+                    multimodal_assets=assets,
+                )
+                return self._json(HTTPStatus.OK, present(STATE))
+            if path == "/api/confirm-context":
+                if STATE.status != "awaiting_context_confirmation":
+                    return self._json(HTTPStatus.BAD_REQUEST, {"error": "There is no pending context question for this project"})
+                payload = self._read_json()
+                target_market = str(payload.get("target_market", "")).strip()
+                if not target_market:
+                    return self._json(HTTPStatus.BAD_REQUEST, {"error": "A target market or region is required for this seasonal request"})
+                STATE = create_enriched_project_state(
+                    STATE.creative_spec.source_prompt,
+                    STATE.creative_spec.reference_asset,
+                    CONTROL_PLANNER,
+                    CONTEXT_AGENT,
+                    target_market,
+                    STATE.creative_spec.multimodal_assets,
+                )
+                STATE.history.append({
+                    "at": "local-demo",
+                    "phase": "human_approval",
+                    "event": "context_confirmed",
+                    "payload": {"message": "User provided the target market required for seasonal context."},
+                })
+                return self._json(HTTPStatus.OK, present(STATE))
+            if path == "/api/approve-plan":
+                if STATE.status != "planning_ready":
+                    return self._json(HTTPStatus.BAD_REQUEST, {"error": "Create a control plan before approving it"})
+                payload = self._read_json()
+                budget = int(payload.get("max_iterations", STATE.creative_spec.recommended_iterations))
+                if budget < 0 or budget > MAX_REPAIR_ITERATIONS:
+                    return self._json(HTTPStatus.BAD_REQUEST, {"error": f"Repair budget must be between 0 and {MAX_REPAIR_ITERATIONS}"})
+                STATE.creative_spec.max_iterations = budget
+                STATE.status = "awaiting_first_video"
+                return self._json(HTTPStatus.OK, present(STATE))
+            if path == "/api/autopilot":
+                payload = self._read_json()
+                action = str(payload.get("action", "start")).strip()
+                if action == "pause":
+                    if STATE.execution_mode != "autopilot":
+                        return self._json(HTTPStatus.BAD_REQUEST, {"error": "Autopilot is not running for this project"})
+                    STATE.autopilot_paused = True
+                    STATE.history.append({
+                        "at": "local-demo",
+                        "phase": "human_approval",
+                        "event": "autopilot_pause_requested",
+                        "payload": {"message": "User requested a pause after the current provider action completes."},
+                    })
+                    return self._json(HTTPStatus.OK, present(STATE))
+                allowed = {"planning_ready", "awaiting_first_video", "ready_for_evaluation", "repair_uploaded", "awaiting_repair_upload", "generating_video", "generated_video_ready", "stopped_budget_exhausted"}
+                if STATE.status not in allowed:
+                    return self._json(HTTPStatus.BAD_REQUEST, {"error": "Autopilot can start only while a plan or an unfinished version is available"})
+                if STATE.status == "planning_ready":
+                    STATE.status = "awaiting_first_video"
+                STATE.execution_mode = "autopilot"
+                STATE.autopilot_paused = False
+                STATE.history.append({
+                    "at": "local-demo",
+                    "phase": "human_approval",
+                    "event": "autopilot_authorized",
+                    "payload": {"message": f"User authorized the Agent to run within its recommended limit of {STATE.creative_spec.max_iterations} repair iteration(s)."},
+                })
+                return self._json(HTTPStatus.OK, present(STATE))
+            if path == "/api/revise-brief":
+                payload = self._read_json()
+                instruction = str(payload.get("instruction", "")).strip()
+                if not instruction:
+                    return self._json(HTTPStatus.BAD_REQUEST, {"error": "Enter a revision before sending it to the Agent"})
+                if STATE.status in {"planning_ready", "awaiting_first_video", "awaiting_context_confirmation"}:
+                    original = STATE
+                    target_market = next(
+                        (str(item.get("value", "")) for item in original.creative_spec.enriched_context.get("facts", []) if item.get("key") == "target_market"),
+                        "",
+                    )
+                    revised_prompt = f"{original.creative_spec.source_prompt}\n\nAdditional user direction: {instruction}"
+                    validate_brief_duration(revised_prompt)
+                    STATE = create_enriched_project_state(
+                        revised_prompt,
+                        original.creative_spec.reference_asset,
+                        CONTROL_PLANNER,
+                        CONTEXT_AGENT,
+                        target_market,
+                        original.creative_spec.multimodal_assets,
+                    )
+                    STATE.history = [*original.history, {
+                        "at": "local-demo",
+                        "phase": "human_approval",
+                        "event": "control_plan_revised",
+                        "payload": {"message": "User added a direction before first-version generation; Agent recompiled the control plan."},
+                    }]
+                    return self._json(HTTPStatus.OK, present(STATE))
+                if STATE.status == "published":
+                    STATE = start_user_directed_revision(STATE, instruction)
+                    return self._json(HTTPStatus.OK, present(STATE))
+                if STATE.status == "awaiting_repair_upload" and STATE.latest_repair_task:
+                    STATE.latest_repair_task.prompt += f" User-directed refinement: {instruction}"
+                    STATE.latest_repair_task.continuity_constraints.append(f"User-directed refinement: {instruction}")
+                    PROMPT_COMPILER.compile(STATE, STATE.latest_repair_task, self._next_version_id(STATE.current_version_id))
+                else:
+                    STATE.pending_user_direction = instruction
+                STATE.history.append({
+                    "at": "local-demo",
+                    "phase": "human_approval",
+                    "event": "next_version_direction_saved",
+                    "payload": {"message": "User direction was retained for the next eligible version; existing evaluated evidence remains immutable."},
+                })
+                return self._json(HTTPStatus.OK, present(STATE))
+            if path == "/api/generate-video":
+                if (STATE.creative_spec.production_strategy or {}).get("mode") == "needs_segmentation":
+                    return self._json(HTTPStatus.BAD_REQUEST, {
+                        "error": "This brief requires a multi-segment production plan. The single-clip generator is intentionally blocked rather than compressing the story."
+                    })
+                if STATE.status not in {"awaiting_first_video", "awaiting_repair_upload"}:
+                    return self._json(HTTPStatus.BAD_REQUEST, {"error": "Approve a control plan or wait for a repair decision before generating a video"})
+                repairing = STATE.status == "awaiting_repair_upload"
+                if repairing and not STATE.latest_repair_task:
+                    return self._json(HTTPStatus.BAD_REQUEST, {"error": "The Agent must create a repair task before generating the next version"})
+                version_id = "v1" if STATE.current_version_id == "none" else self._next_version_id(STATE.current_version_id)
+                PROMPT_COMPILER.compile(STATE, STATE.latest_repair_task if repairing else None, version_id)
+                job = VIDEO_GENERATOR.submit(STATE, version_id, STATE.latest_repair_task if repairing else None)
+                STATE.generation_jobs.append(job)
+                review = next((item for item in STATE.version_reviews if item.version_id == version_id), None)
+                if not review:
+                    STATE.version_reviews.append(VersionReview(
+                        version_id=version_id,
+                        parent_version_id=None if version_id == "v1" else STATE.current_version_id,
+                        status="generating",
+                        compile_run_id=job.compile_run_id,
+                        generation_contract_id=job.generation_contract_id,
+                        evaluation_contract_id=job.evaluation_contract_id,
+                    ))
+                else:
+                    # A retry of the same version must point to the contract
+                    # that actually produced the retried provider job.
+                    review.compile_run_id = job.compile_run_id
+                    review.generation_contract_id = job.generation_contract_id
+                    review.evaluation_contract_id = job.evaluation_contract_id
+                STATE.status = "generating_video"
+                STATE.history.append({
+                    "at": "local-demo",
+                    "phase": "act",
+                    "event": "generation_submitted",
+                    "payload": {
+                        "message": (
+                            f"Agent submitted {version_id} with {job.tool_name} as "
+                            f"{STATE.creative_spec.generation_spec.get('duration_seconds', 'planned')}s "
+                            f"{STATE.creative_spec.generation_spec.get('aspect_ratio', 'planned')} "
+                            f"at {STATE.creative_spec.generation_spec.get('quality_target', 'planned')} clarity."
+                        ),
+                        "tool": job.tool_name,
+                        "provider": job.provider_id,
+                        "model": job.model_id,
+                        "request_mode": job.request_mode,
+                        "capability_profile": job.capability_profile_id,
+                        "capability_notice": job.capability_notice,
+                        "generation_spec": STATE.creative_spec.generation_spec,
+                        "repair_scope": (STATE.latest_repair_task.execution_scope if repairing and STATE.latest_repair_task else "initial_generation"),
+                        "repair_scope_notice": (STATE.latest_repair_task.scope_notice if repairing and STATE.latest_repair_task else "Initial complete-clip generation."),
+                        "compile_run_id": job.compile_run_id,
+                        "generation_contract_id": job.generation_contract_id,
+                        "evaluation_contract_id": job.evaluation_contract_id,
+                        "reason": job.selection_reason,
+                        "rejected": job.rejected_option,
+                    },
+                })
+                return self._json(HTTPStatus.ACCEPTED, present(STATE))
+            if path == "/api/refresh-generation":
+                if STATE.status != "generating_video" or not STATE.generation_jobs:
+                    return self._json(HTTPStatus.OK, present(STATE))
+                job = STATE.generation_jobs[-1]
+                try:
+                    job = VIDEO_GENERATOR.refresh(job)
+                except ValueError as exc:
+                    # Keep the provider task and its version intact: a polling
+                    # outage does not prove the remote render failed.  Pause
+                    # autonomy so it cannot submit a duplicate paid job; the
+                    # browser will continue its harmless status polling.
+                    job.error = str(exc)
+                    if job.status not in {"queued", "running"}:
+                        job.status = "queued"
+                    review = next((item for item in STATE.version_reviews if item.version_id == job.version_id), None)
+                    if review:
+                        review.status = "generating"
+                        review.observation_error = job.error
+                    self._pause_autopilot_for_failure(
+                        "autopilot_paused_for_generation_status_error",
+                        "Agent autonomy paused because the provider task status could not be verified. The existing task is retained; no duplicate generation will be submitted until the user resumes it.",
+                    )
+                    STATE.history.append({
+                        "at": "local-demo",
+                        "phase": "act",
+                        "event": "generation_status_unavailable",
+                        "payload": {"message": job.error},
+                    })
+                    return self._json(HTTPStatus.OK, present(STATE))
+                review = next((item for item in STATE.version_reviews if item.version_id == job.version_id), None)
+                if job.status in {"queued", "running"}:
+                    if review:
+                        review.status = "generating"
+                    return self._json(HTTPStatus.OK, present(STATE))
+                if job.status == "succeeded":
+                    if not job.output_video_url:
+                        job.status = "failed"
+                        job.error = "The video provider completed the task without a downloadable video URL"
+                        return self._generation_failed(job, review)
+                    try:
+                        local_path, size = self._download_generated_video(job.output_video_url, job.version_id)
+                    except ValueError as exc:
+                        job.status = "failed"
+                        job.error = str(exc)
+                        return self._generation_failed(job, review)
+                    STATE.current_version_id = job.version_id
+                    STATE.current_video_asset = {
+                        "name": f"Agent generated {job.version_id.upper()}",
+                        "mime_type": "video/mp4",
+                        "size": str(size),
+                        "source": "agent_generated",
+                        "local_video_path": str(local_path),
+                        "local_video_url": f"/api/generated-video/{job.version_id}",
+                        "frame_count": "0",
+                    }
+                    if review:
+                        review.asset = STATE.current_video_asset.copy()
+                        review.status = "sampling_evidence"
+                    STATE.status = "generated_video_ready"
+                    STATE.history.append({
+                        "at": "local-demo",
+                        "phase": "act",
+                        "event": "generation_completed",
+                        "payload": {"message": f"The video provider completed {job.version_id}; Agent is preparing visual evidence."},
+                    })
+                else:
+                    return self._generation_failed(job, review)
+                return self._json(HTTPStatus.OK, present(STATE))
+            if path == "/api/register-generated-video":
+                if STATE.status != "generated_video_ready" or not STATE.current_video_asset:
+                    return self._json(HTTPStatus.BAD_REQUEST, {"error": "A completed generated video is required before preparing evidence"})
+                payload = self._read_json()
+                frame_records = self._store_evaluation_frames(payload.get("frames"))
+                self._discard_evaluation_frames(STATE.evaluation_frame_records)
+                STATE.evaluation_frame_records = frame_records
+                STATE.current_video_asset["frame_count"] = str(len(frame_records))
+                STATE.current_video_asset["poster_data_url"] = self._poster_data_url(frame_records[0])
+                review = next((item for item in STATE.version_reviews if item.version_id == STATE.current_version_id), None)
+                if review:
+                    review.asset = STATE.current_video_asset.copy()
+                    review.status = "awaiting_evaluation"
+                STATE.status = "repair_uploaded" if STATE.current_version_id != "v1" else "ready_for_evaluation"
+                STATE.history.append({
+                    "at": "local-demo",
+                    "phase": "observe",
+                    "event": "generated_video_evidence_ready",
+                    "payload": {"message": f"Agent sampled {len(frame_records)} risk-aware evidence frames for {STATE.current_version_id}."},
+                })
+                return self._json(HTTPStatus.OK, present(STATE))
+            if path == "/api/update-budget":
+                editable_statuses = {"planning_ready", "awaiting_first_video", "generating_video", "generated_video_ready", "ready_for_evaluation", "awaiting_repair_upload", "repair_uploaded", "stopped_budget_exhausted", "published", "generation_failed"}
+                if STATE.status not in editable_statuses:
+                    return self._json(HTTPStatus.BAD_REQUEST, {"error": "The repair budget can no longer be changed for this project"})
+                payload = self._read_json()
+                budget = int(payload.get("max_iterations", STATE.creative_spec.max_iterations))
+                if budget < STATE.iterations_used or budget > MAX_REPAIR_ITERATIONS:
+                    return self._json(HTTPStatus.BAD_REQUEST, {"error": f"The repair budget must be between {STATE.iterations_used} and {MAX_REPAIR_ITERATIONS} because {STATE.iterations_used} iteration(s) have already been used"})
+                previous_budget = STATE.creative_spec.max_iterations
+                STATE.creative_spec.max_iterations = budget
+                if budget != previous_budget:
+                    STATE.history.append({
+                        "at": "local-demo",
+                        "phase": "human_approval",
+                        "event": "repair_budget_updated",
+                        "payload": {"message": f"User changed the repair budget from {previous_budget} to {budget} iteration(s)."},
+                    })
+                    if STATE.execution_mode == "autopilot" and not STATE.autopilot_paused:
+                        STATE.autopilot_paused = True
+                        STATE.history.append({
+                            "at": "local-demo",
+                            "phase": "human_approval",
+                            "event": "autopilot_paused_for_budget_change",
+                            "payload": {"message": "Agent autonomy paused after the user changed the repair budget. Resume explicitly to continue from the current step."},
+                        })
+                if STATE.status == "stopped_budget_exhausted" and budget > STATE.iterations_used:
+                    ORCHESTRATOR.resume_after_human_approval(STATE)
+                return self._json(HTTPStatus.OK, present(STATE))
+            if path == "/api/continue-optimization":
+                ORCHESTRATOR.prepare_optional_iteration(STATE)
+                return self._json(HTTPStatus.OK, present(STATE))
+            if path in {"/api/upload-first-video", "/api/replace-first-video"}:
+                replacing = path == "/api/replace-first-video"
+                expected_status = "ready_for_evaluation" if replacing else "awaiting_first_video"
+                if STATE.status != expected_status:
+                    message = "Only a V1 awaiting evaluation can be replaced" if replacing else "Approve a control plan before adding the first video"
+                    return self._json(HTTPStatus.BAD_REQUEST, {"error": message})
+                payload = self._read_json()
+                name, mime_type, size, frame_records = self._prepare_video_upload(payload)
+                if replacing:
+                    self._discard_evaluation_frames(STATE.evaluation_frame_records)
+                STATE.current_video_asset = {
+                    "name": name,
+                    "mime_type": mime_type,
+                    "size": str(size),
+                    "source": "user_upload",
+                    "frame_count": str(len(frame_records)),
+                    "poster_data_url": self._poster_data_url(frame_records[0]),
+                }
+                STATE.evaluation_frame_records = frame_records
+                STATE.current_version_id = "v1"
+                existing_review = next((item for item in STATE.version_reviews if item.version_id == "v1"), None)
+                if existing_review:
+                    existing_review.asset = STATE.current_video_asset.copy()
+                    existing_review.status = "awaiting_evaluation"
+                    existing_review.observation_error = ""
+                else:
+                    STATE.version_reviews.append(VersionReview(
+                        version_id="v1",
+                        parent_version_id=None,
+                        asset=STATE.current_video_asset.copy(),
+                    ))
+                STATE.status = "ready_for_evaluation"
+                STATE.history.append({
+                    "at": "local-demo",
+                    "phase": "act",
+                    "event": "first_video_replaced" if replacing else "first_video_added",
+                    "payload": {"message": f"User {'replaced' if replacing else 'added'} {name} as version v1 for quality evaluation."},
+                })
+                return self._json(HTTPStatus.OK, present(STATE))
+            if path == "/api/remove-first-video":
+                if STATE.status != "ready_for_evaluation":
+                    return self._json(HTTPStatus.BAD_REQUEST, {"error": "A V1 can be removed only before quality evaluation starts"})
+                self._discard_evaluation_frames(STATE.evaluation_frame_records)
+                removed_name = (STATE.current_video_asset or {}).get("name", "V1")
+                STATE.current_video_asset = None
+                STATE.evaluation_frame_records = []
+                STATE.current_version_id = "none"
+                STATE.version_reviews = [item for item in STATE.version_reviews if item.version_id != "v1"]
+                STATE.status = "awaiting_first_video"
+                STATE.history.append({
+                    "at": "local-demo",
+                    "phase": "act",
+                    "event": "first_video_removed",
+                    "payload": {"message": f"User removed {removed_name} before quality evaluation."},
+                })
+                return self._json(HTTPStatus.OK, present(STATE))
+            if path == "/api/upload-repaired-video":
+                if STATE.status != "awaiting_repair_upload" or not STATE.latest_repair_task:
+                    return self._json(HTTPStatus.BAD_REQUEST, {"error": "A repaired video can be added only after the Agent creates a repair task"})
+                payload = self._read_json()
+                name, mime_type, size, frame_records = self._prepare_video_upload(payload)
+                self._discard_evaluation_frames(STATE.evaluation_frame_records)
+                parent_version = STATE.current_version_id
+                next_version = self._next_version_id(parent_version)
+                STATE.current_video_asset = {
+                    "name": name,
+                    "mime_type": mime_type,
+                    "size": str(size),
+                    "source": "user_upload",
+                    "frame_count": str(len(frame_records)),
+                    "poster_data_url": self._poster_data_url(frame_records[0]),
+                }
+                STATE.evaluation_frame_records = frame_records
+                STATE.current_version_id = next_version
+                STATE.version_reviews.append(VersionReview(
+                    version_id=next_version,
+                    parent_version_id=parent_version,
+                    asset=STATE.current_video_asset.copy(),
+                ))
+                STATE.status = "repair_uploaded"
+                STATE.history.append({
+                    "at": "local-demo",
+                    "phase": "act",
+                    "event": "repair_video_added",
+                    "payload": {"message": f"User added {name} as {next_version} for verification."},
+                })
+                return self._json(HTTPStatus.OK, present(STATE))
+            if path == "/api/run-loop":
+                if STATE.status not in {"ready_for_evaluation", "repair_uploaded"}:
+                    return self._json(HTTPStatus.BAD_REQUEST, {"error": "Upload or generate a first video version before evaluation"})
+                ORCHESTRATOR.run_once(STATE)
+                return self._json(HTTPStatus.OK, present(STATE))
+            if path == "/api/simulate-repair":
+                ORCHESTRATOR.simulate_repaired_upload(STATE)
+                return self._json(HTTPStatus.OK, present(STATE))
+            if path == "/api/reset":
+                STATE = create_empty_state()
+                return self._json(HTTPStatus.OK, present(STATE))
+            return self._json(HTTPStatus.NOT_FOUND, {"error": "Unknown endpoint"})
+        except ValueError as exc:
+            return self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+
+    def log_message(self, format, *args):
+        # Keep terminal output compact for a live demo.
+        return
+
+    def _json(self, status: HTTPStatus, data: dict):
+        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _serve_generated_video(self, version_id: str):
+        review = next((item for item in STATE.version_reviews if item.version_id == version_id), None)
+        asset = review.asset if review else None
+        raw_path = (asset or {}).get("local_video_path")
+        if not isinstance(raw_path, str):
+            return self._json(HTTPStatus.NOT_FOUND, {"error": "Generated video is unavailable"})
+        path = Path(raw_path)
+        root = (RUNTIME / "generated").resolve()
+        try:
+            path.resolve().relative_to(root)
+        except (ValueError, OSError):
+            return self._json(HTTPStatus.FORBIDDEN, {"error": "Invalid generated video path"})
+        if not path.is_file():
+            return self._json(HTTPStatus.NOT_FOUND, {"error": "Generated video file is unavailable"})
+        data = path.read_bytes()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "video/mp4")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _read_json(self) -> dict:
+        content_length = int(self.headers.get("Content-Length", "0"))
+        if content_length > MAX_REQUEST_BYTES:
+            raise ValueError("This request contains too much reference media. Please use smaller images or shorter audio files.")
+        raw = self.rfile.read(content_length) if content_length else b"{}"
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("Invalid JSON request body") from exc
+
+    @staticmethod
+    def _pause_autopilot_for_failure(event: str, message: str) -> None:
+        if STATE.execution_mode != "autopilot" or STATE.autopilot_paused:
+            return
+        STATE.autopilot_paused = True
+        STATE.history.append({
+            "at": "local-demo",
+            "phase": "human_approval",
+            "event": event,
+            "payload": {"message": message},
+        })
+
+    def _generation_failed(self, job, review):
+        """End a failed local handoff without silently resubmitting a paid job."""
+        STATE.status = "awaiting_repair_upload" if job.version_id != "v1" else "awaiting_first_video"
+        error = job.error or "Video generation failed or was canceled."
+        if review:
+            review.status = "generation_failed"
+            review.observation_error = error
+        self._pause_autopilot_for_failure(
+            "autopilot_paused_for_generation_failure",
+            "Agent autonomy paused because the video provider did not complete the current task. No replacement generation will be submitted until the user explicitly resumes it.",
+        )
+        STATE.history.append({
+            "at": "local-demo",
+            "phase": "act",
+            "event": "generation_failed",
+            "payload": {"message": error},
+        })
+        return self._json(HTTPStatus.OK, present(STATE))
+
+    @staticmethod
+    def _normalise_multimodal_assets(payload: dict) -> list[dict[str, str]]:
+        """Validate retained multimodal assets before they enter Agent memory."""
+        raw_assets = payload.get("multimodal_assets")
+        if raw_assets is None:
+            legacy = payload.get("reference_asset")
+            raw_assets = [legacy] if legacy else []
+        if not isinstance(raw_assets, list):
+            raise ValueError("Reference assets must be a list")
+        if len(raw_assets) > 12:
+            raise ValueError("Use at most 9 reference images and 3 audio files in this local demo")
+        images = 0
+        audio = 0
+        normalised: list[dict[str, str]] = []
+        seen_names: set[str] = set()
+        for input_order, raw in enumerate(raw_assets, start=1):
+            if not isinstance(raw, dict):
+                raise ValueError("Every reference asset must be an object")
+            mime_type = str(raw.get("mime_type", "")).lower().strip()
+            data_url = raw.get("data_url")
+            name = str(raw.get("name", "reference asset")).strip()[:120]
+            name_key = name.casefold()
+            if name_key in seen_names:
+                raise ValueError("Reference filenames must be unique for @ reference binding")
+            seen_names.add(name_key)
+            role = str(raw.get("role", "reference")).strip()[:80]
+            raw_mentions = raw.get("prompt_mentions", [])
+            if not isinstance(raw_mentions, list):
+                raw_mentions = []
+            prompt_mentions = [str(item).strip()[:140] for item in raw_mentions if str(item).strip()][:3]
+            if mime_type.startswith("image/") and isinstance(data_url, str) and data_url.startswith("data:image/"):
+                images += 1
+                if images > 9:
+                    raise ValueError("Use at most 9 reference images in this local demo")
+                if len(data_url) > 2_000_000:
+                    raise ValueError("Each reference image must be under 1.5 MB after browser compression")
+                normalised.append({
+                    "name": name or "reference image", "mime_type": mime_type,
+                    "size": str(raw.get("size", 0)), "role": role or "Visual reference",
+                    "media_type": "image", "preview_data_url": data_url,
+                    "prompt_mentions": prompt_mentions, "input_order": input_order,
+                })
+            elif mime_type in {"audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav"} and isinstance(data_url, str) and data_url.startswith("data:audio/"):
+                audio += 1
+                if audio > 3:
+                    raise ValueError("Use at most 3 reference audio files in this local demo")
+                try:
+                    raw_size = int(raw.get("size", 0))
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("Audio reference size is invalid") from exc
+                if raw_size <= 0 or raw_size > 9 * 1024 * 1024:
+                    raise ValueError("Each reference audio file must be under 9 MB for this local demo")
+                # Base64 adds roughly one third to a browser file upload, so
+                # this guard must be larger than the original 9 MB file limit.
+                if len(data_url) > 13 * 1024 * 1024:
+                    raise ValueError("Each reference audio file must be under 9 MB for this local demo")
+                raw_duration = raw.get("duration_seconds")
+                duration_seconds = None
+                if raw_duration is not None:
+                    try:
+                        duration_seconds = round(float(raw_duration), 2)
+                    except (TypeError, ValueError) as exc:
+                        raise ValueError("Audio reference duration is invalid") from exc
+                    if not 2 <= duration_seconds <= 15:
+                        raise ValueError("Each MiniMax H3 audio reference must be 2–15 seconds")
+                normalised.append({
+                    "name": name or "reference audio", "mime_type": mime_type,
+                    "size": str(raw.get("size", 0)), "role": role or "Audio reference",
+                    "media_type": "audio", "data_url": data_url,
+                    "prompt_mentions": prompt_mentions, "input_order": input_order,
+                    **({"duration_seconds": duration_seconds} if duration_seconds is not None else {}),
+                })
+            else:
+                raise ValueError("Reference assets must be PNG/JPEG/WebP images or MP3/WAV audio")
+        return normalised
+
+    def _prepare_video_upload(self, payload: dict) -> tuple[str, str, int, list[dict[str, object]]]:
+        name = str(payload.get("name", "")).strip()
+        mime_type = str(payload.get("mime_type", "")).strip()
+        size = int(payload.get("size", 0))
+        if not name or not mime_type.startswith("video/"):
+            raise ValueError("Choose an MP4, WebM, or MOV video file")
+        if size <= 0 or size > 500 * 1024 * 1024:
+            raise ValueError("Video files must be between 1 byte and 500 MB")
+        return name, mime_type, size, self._store_evaluation_frames(payload.get("frames"))
+
+    @staticmethod
+    def _download_generated_video(video_url: str, version_id: str) -> tuple[Path, int]:
+        parsed = urlparse(video_url)
+        if parsed.scheme != "https" or not parsed.netloc:
+            raise ValueError("The video provider returned an invalid video URL")
+        target_dir = RUNTIME / "generated"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / f"{version_id}-{uuid.uuid4().hex}.mp4"
+        request = urllib_request.Request(video_url, headers={"User-Agent": "VideoControlLoopAgent/1.0"})
+        try:
+            with urllib_request.urlopen(request, timeout=90) as response, target.open("wb") as output:
+                total = 0
+                while True:
+                    chunk = response.read(1024 * 256)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > 120 * 1024 * 1024:
+                        raise ValueError("Generated video exceeds the 120 MB local-demo limit")
+                    output.write(chunk)
+        except ValueError:
+            target.unlink(missing_ok=True)
+            raise
+        except OSError as exc:
+            target.unlink(missing_ok=True)
+            raise ValueError("The completed video could not be downloaded for local evaluation") from exc
+        if target.stat().st_size == 0:
+            target.unlink(missing_ok=True)
+            raise ValueError("The video provider returned an empty video file")
+        return target, target.stat().st_size
+
+    @staticmethod
+    def _next_version_id(version_id: str) -> str:
+        if version_id.startswith("v") and version_id[1:].isdigit():
+            return f"v{int(version_id[1:]) + 1}"
+        raise ValueError("The current video version is invalid")
+
+    @staticmethod
+    def _store_evaluation_frames(raw_frames) -> list[dict[str, object]]:
+        if not isinstance(raw_frames, list) or not 3 <= len(raw_frames) <= 6:
+            raise ValueError("The browser must provide 3 to 6 sampled keyframes for visual evaluation")
+        decoded: list[tuple[str, float, bytes, str, str]] = []
+        for index, frame in enumerate(raw_frames, start=1):
+            if not isinstance(frame, dict):
+                raise ValueError("Invalid sampled keyframe")
+            data_url = frame.get("data_url")
+            timestamp = frame.get("timestamp")
+            expected_shot_id = frame.get("expected_shot_id")
+            sampling_reason = frame.get("sampling_reason")
+            prefix = "data:image/jpeg;base64,"
+            if not isinstance(data_url, str) or not data_url.startswith(prefix):
+                raise ValueError("Sampled keyframes must be JPEG images")
+            if not isinstance(timestamp, (int, float)) or timestamp < 0:
+                raise ValueError("Invalid keyframe timestamp")
+            planned_shot_ids = {str(shot.get("shot_id")) for shot in STATE.creative_spec.shots if isinstance(shot, dict)}
+            if expected_shot_id not in planned_shot_ids:
+                raise ValueError("Each evidence frame must identify its planned shot")
+            if not isinstance(sampling_reason, str) or not sampling_reason.strip() or len(sampling_reason.strip()) > 240:
+                raise ValueError("Each evidence frame must include a concise sampling reason")
+            try:
+                image = base64.b64decode(data_url[len(prefix):], validate=True)
+            except (ValueError, binascii.Error) as exc:
+                raise ValueError("A sampled keyframe could not be decoded") from exc
+            if not image or len(image) > 1024 * 1024:
+                raise ValueError("Each sampled keyframe must be below 1 MB")
+            decoded.append((f"F{index}", float(timestamp), image, expected_shot_id, sampling_reason.strip()))
+        directory = RUNTIME / "frames" / uuid.uuid4().hex
+        directory.mkdir(parents=True, exist_ok=False)
+        records = []
+        for frame_id, timestamp, image, expected_shot_id, sampling_reason in decoded:
+            path = directory / f"{frame_id.lower()}.jpg"
+            path.write_bytes(image)
+            records.append({
+                "frame_id": frame_id,
+                "timestamp": timestamp,
+                "path": str(path),
+                "expected_shot_id": expected_shot_id,
+                "sampling_reason": sampling_reason,
+            })
+        return records
+
+    @staticmethod
+    def _poster_data_url(record: dict[str, str | float]) -> str:
+        image = Path(str(record["path"])).read_bytes()
+        return "data:image/jpeg;base64," + base64.b64encode(image).decode("ascii")
+
+    @staticmethod
+    def _discard_evaluation_frames(records: list[dict[str, str | float]]) -> None:
+        """Remove only the per-upload temporary frame directory owned by this request."""
+        if not records:
+            return
+        directory = Path(str(records[0].get("path", ""))).parent
+        runtime_frames = (RUNTIME / "frames").resolve()
+        try:
+            directory.resolve().relative_to(runtime_frames)
+        except (ValueError, OSError):
+            return
+        if directory.is_dir():
+            shutil.rmtree(directory)
+
+
+def run(port: int = 8000):
+    server = ThreadingHTTPServer(("127.0.0.1", port), DemoHandler)
+    print(f"Video Control Loop Agent running at http://127.0.0.1:{port}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nServer stopped.")
+    finally:
+        server.server_close()
