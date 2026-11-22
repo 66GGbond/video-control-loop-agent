@@ -1,4 +1,4 @@
-"""Canvas-only image selection and durable, idempotent local background jobs."""
+"""Shared image selection and durable, idempotent local background jobs."""
 import hashlib
 import json
 import os

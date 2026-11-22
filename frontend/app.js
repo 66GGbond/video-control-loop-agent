@@ -692,16 +692,19 @@ function projectStage(status) {
 }
 
 function renderProjectStatus(state) {
-  const stage = projectStage(state.status);
+  const characterPlan=state.creative_spec.character_reference_plan;
+  const stage = ['planning_ready','awaiting_first_video'].includes(state.status)&&characterPlan?.required ? 'characters' : projectStage(state.status);
   const labels = {
     brief: ["Ready for a creative brief", "Describe the video to the Creative Agent to begin the controlled production loop.", "Brief", "Open Creative Agent"],
     context: ["Creative Agent needs one decision", "A missing context field could change a high-impact generation constraint.", "Context", "Answer the Agent"],
     plan: state.status === "needs_segmentation"
       ? ["Multi-segment plan required", "The Agent determined this brief should not be compressed into one 30-second clip. Revise the brief or plan separate segments.", "Segment plan", "Revise brief"]
       : ["Control plan ready for approval", "Review the Agent's planned shots, constraints, risks, and bounded repair budget.", "Plan ready", "Approve control plan"],
+    characters: ["Character reference stage", "Prepare four views of the important characters before video generation.", "Character references", "Generate four views"],
     version: ["Video version in production", "The approved plan is being rendered or prepared as evidence for evaluation.", "Version", "Wait for video evidence"],
     quality: ["Quality control loop active", "Review the selected version, its evidence-backed quality result, and the Agent's next decision.", "Quality", "Review version result"],
   };
+  if(characterPlan?.status==='ready')labels.characters=["Control plan ready for approval","Character references attached to video","Plan ready","Generate V1"];
   const [title, copy, badge, next] = labels[stage];
   document.querySelector("#project-status-title").textContent = title;
   document.querySelector("#project-status-copy").textContent = copy;
@@ -710,7 +713,7 @@ function renderProjectStatus(state) {
   const latestAsset = state.current_video_asset || (state.creative_spec || {}).reference_asset;
   document.querySelector("#project-latest-asset").textContent = latestAsset?.name || "Awaiting input";
   document.querySelector("#project-next-action").textContent = next;
-  const sequence = ["brief", "context", "plan", "version", "quality"];
+  const sequence = ["brief", "context", "plan", "characters", "version", "quality"];
   const stageIndex = sequence.indexOf(stage);
   document.querySelectorAll(".project-steps li").forEach((item, index) => {
     item.classList.toggle("active", item.dataset.stage === stage);
@@ -823,10 +826,7 @@ function renderPlanLanguage(spec) {
     return `<li><strong>${escapeHTML(shot.shot_id)}</strong> — ${escapeHTML(I18n.text(shot.intent))}${timing}</li>`;
   }).join("");
   document.querySelector("#constraint-list").innerHTML=(spec.immutable_character_attributes||[]).map(item=>`<span class="tag">${escapeHTML(I18n.text(item))}</span>`).join("");
-  const output=spec.generation_spec||{}, duration=spec.duration_plan||{}, strategy=spec.production_strategy||{};
-  document.querySelector("#generation-spec-rationale").textContent=I18n.text(strategy.mode==="needs_segmentation"?strategy.reason||"This brief requires multiple controlled segments.":output.rationale||"The Agent will select an output specification from the brief.");
-  const beats=(duration.timeline||[]).map(shot=>`${shot.shot_id} ${shot.duration_seconds}s · ${I18n.text(shot.pacing||shot.beat_function||"planned beat")}`).join(" → ");
-  document.querySelector("#duration-plan-summary").textContent=strategy.mode==="needs_segmentation"?I18n.text("Single-clip generation is intentionally blocked. The next production step is a segment plan, not a compressed prompt."):beats?`${I18n.text("Editorial timing")} · ${beats}。${I18n.text(duration.reason||"")}`:I18n.text("Editorial timing will be derived from the approved semantic beats.");
+
 }
 
 function renderCreativeAgent(state, spec, enrichedContext) {
@@ -1204,9 +1204,38 @@ function finishQualityProgress(success) {
   }
 }
 
+function renderReferenceMedia(spec) {
+  const referenceMedia = Array.isArray(spec.multimodal_assets) ? spec.multimodal_assets : [];
+  const referenceImages = referenceMedia.filter(asset => asset && asset.media_type === "image");
+  const referenceAudio = referenceMedia.filter(asset => asset && asset.media_type === "audio");
+  const referenceVideos = referenceMedia.filter(asset => asset && asset.media_type === "video");
+  const reference = spec.reference_asset || referenceImages[0];
+  const referenceLabel = [
+    referenceImages.length ? I18n.text(`${referenceImages.length} images`) : "",
+    referenceAudio.length ? I18n.text(`${referenceAudio.length} audio files`) : "",
+    referenceVideos.length ? I18n.text(`${referenceVideos.length} video reference(s)`) : "",
+  ].filter(Boolean).join(" + ");
+  document.querySelector("#reference-role-label").textContent = referenceLabel || I18n.text("Prompt-derived constraints");
+  document.querySelector("#reference-role-label").translate=false;
+  document.querySelector("#reference-title").translate=false;
+  document.querySelector("#reference-title").textContent = reference
+    ? (referenceMedia.length > 1 ? `${I18n.text("Attached")} · ${referenceLabel}` : reference.name)
+    : (referenceMedia.length ? `${I18n.text("Attached")} · ${referenceLabel}` : I18n.text("No reference media"));
+  document.querySelector("#reference-detail").textContent = referenceMedia.length
+    ? "Reference materials attached to video generation."
+    : "The Agent will preserve constraints extracted from your brief.";
+  const referenceVisual = document.querySelector("#reference-visual");
+  const referencePreview = document.querySelector("#reference-preview");
+  referenceVisual.hidden = !(reference && reference.preview_data_url);
+  if (!referenceVisual.hidden) referencePreview.src = reference.preview_data_url;
+
+}
+
 function render(state) {
   renderedState = state;
   renderModelSelection(state);
+  renderCharacterReferences(state);
+  scheduleProductionDefaults(state);
   if (state.current_version_id !== lastCurrentVersionId) {
     selectedReviewVersionId = state.current_version_id;
     lastCurrentVersionId = state.current_version_id;
@@ -1250,37 +1279,9 @@ function render(state) {
     .map(([label, value]) => `<div class="direction-item"><b>${label}</b><span>${value}</span></div>`).join("");
   document.querySelector("#acceptance-criteria").innerHTML = (spec.acceptance_criteria || []).map(item => `<div class="criterion"><span class="criterion-shot">${item.shot_id}</span><span>${item.requirement}</span>${item.critical ? `<b>critical</b>` : ""}</div>`).join("");
   document.querySelector("#risk-list").innerHTML = (spec.risk_forecast || []).map(item => `<span class="risk">${item}</span>`).join("");
-  const outputSpec = spec.generation_spec || {};
-  const productionStrategy = spec.production_strategy || {};
-  const outputTags = [];
-  if (productionStrategy.mode === "needs_segmentation") outputTags.push("Multi-segment required");
-  else if (outputSpec.duration_seconds) outputTags.push(`${outputSpec.duration_seconds}s`);
-  if (outputSpec.aspect_ratio) outputTags.push(outputSpec.aspect_ratio);
-  if (outputSpec.quality_target) outputTags.push(`${outputSpec.quality_target} clarity`);
-  document.querySelector("#generation-spec").innerHTML = outputTags.map(item => `<span class="tag">${item}</span>`).join("");
   const autopilot = state.execution_mode === "autopilot";
 
-  const referenceMedia = Array.isArray(spec.multimodal_assets) ? spec.multimodal_assets : [];
-  const referenceImages = referenceMedia.filter(asset => asset && asset.media_type === "image");
-  const referenceAudio = referenceMedia.filter(asset => asset && asset.media_type === "audio");
-  const referenceVideos = referenceMedia.filter(asset => asset && asset.media_type === "video");
-  const reference = spec.reference_asset || referenceImages[0];
-  const referenceLabel = [
-    referenceImages.length ? `${referenceImages.length} image${referenceImages.length === 1 ? "" : "s"}` : "",
-    referenceAudio.length ? `${referenceAudio.length} audio file${referenceAudio.length === 1 ? "" : "s"}` : "",
-    referenceVideos.length ? `${referenceVideos.length} video reference(s)` : "",
-  ].filter(Boolean).join(" + ");
-  document.querySelector("#reference-role-label").textContent = referenceLabel || "Prompt-derived constraints";
-  document.querySelector("#reference-title").textContent = reference
-    ? (referenceMedia.length > 1 ? `${referenceLabel} attached` : reference.name)
-    : (referenceMedia.length ? `${referenceLabel} attached` : "No reference media");
-  document.querySelector("#reference-detail").textContent = referenceMedia.length
-    ? "Reference material is retained for generation planning, provider routing, and later visual evaluation."
-    : "The Agent will preserve constraints extracted from your brief.";
-  const referenceVisual = document.querySelector("#reference-visual");
-  const referencePreview = document.querySelector("#reference-preview");
-  referenceVisual.hidden = !(reference && reference.preview_data_url);
-  if (!referenceVisual.hidden) referencePreview.src = reference.preview_data_url;
+  renderReferenceMedia(spec);
 
   const budgetControl = document.querySelector("#repair-budget-control");
   const budgetValue = document.querySelector("#budget-value");
@@ -1640,15 +1641,17 @@ async function generateVideo(event) {
   const button = event?.currentTarget || document.querySelector("#generate-video");
   button.disabled = true;
   try {
-    const recommendation = await recommendCurrentVideoModel();
-    const choice=recommendation.creative_spec.video_model_selection;
-    if (!choice?.confirmed || document.querySelector('#video-model-select').value!==choice.selected_model) {
-      if (autopilotIsRunning(recommendation)) render(await endpoint("/api/autopilot", {method:"POST",body:JSON.stringify({action:"pause"})}));
-      document.querySelector("#model-selection-panel").scrollIntoView({behavior:"smooth",block:"center"});
-      I18n.alert("请先确认本次使用的视频模型，再开始生成。");
+    await prepareCharacterReferences();
+    if (renderedState.creative_spec.character_reference_plan?.status==='generated') await attachCharacterReferences();
+    const characters = renderedState.creative_spec.character_reference_plan;
+    if (characters?.required && (characters.status !== 'ready' || !characters.attached)) {
+      if (autopilotIsRunning(renderedState)) render(await endpoint('/api/autopilot', {method:'POST',body:JSON.stringify({action:'pause'})}));
+      location.hash = 'vcl';
+      window.setTimeout(()=>document.querySelector('#character-references').scrollIntoView({behavior:'smooth',block:'center'}),0);
       button.disabled = false;
       return;
     }
+    await saveGenerationSettings();
     await approveCurrentPlan();
     const state = await endpoint("/api/generate-video", { method: "POST" });
     render(state);
@@ -1734,25 +1737,11 @@ document.querySelector("#reset").addEventListener("click", async () => {
 refresh();
 
 window.addEventListener("languagechange", () => {
-  if(renderedState){renderConversation(renderedState);if(renderedState.creative_spec.shots?.length)renderPlanLanguage(renderedState.creative_spec);}
+  if(renderedState){renderConversation(renderedState);if(renderedState.creative_spec.shots?.length){renderPlanLanguage(renderedState.creative_spec);renderReferenceMedia(renderedState.creative_spec);}}
   const report = renderedState && selectedReview(renderedState)?.report;
   if (!report) return;
   const reports = renderedState.version_reviews.map(item => item.report).filter(Boolean);
   drawTrend(document.querySelector("#trend-canvas"), reports, Number(report.rubric_profile?.overall_floor || 3));
-});
-
-document.querySelector("#add-reference-video").addEventListener("click", () => {
-  const input=document.querySelector("#reference-video-url");
-  const seconds=Number(document.querySelector("#reference-video-seconds").value);
-  try {
-    const url=new URL(input.value);
-    if (url.protocol!=="https:" || seconds<2 || seconds>30 || !Number.isFinite(seconds)) throw new Error("请提供 HTTPS 视频链接和 2–30 秒时长。");
-    if (selectedReferenceItems.filter(isVideoReference).length>=10) throw new Error("最多添加 10 个视频参考。");
-    const name=decodeURIComponent(url.pathname.split("/").at(-1)) || "reference.mp4";
-    if (selectedReferenceItems.some(file=>file.name.toLowerCase()===name.toLowerCase())) throw new Error("参考素材文件名不能重复。");
-    selectedReferenceItems.push({name,type:name.toLowerCase().endsWith(".mov")?"video/quicktime":"video/mp4",size:0,lastModified:0,reference_url:url.href,duration_seconds:seconds});
-    renderReferenceAttachments();input.value="";
-  }catch(error){I18n.alert(error.message);}
 });
 
 // Canvas hands a reviewable draft to the same composer; it never calls a paid provider.

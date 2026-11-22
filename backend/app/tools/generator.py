@@ -145,6 +145,7 @@ class ArkVideoGenerator:
                 f"Follow this approved semantic-beat timeline in order: {shot_text}. The beat boundaries are control targets, not a demand for hard cuts. Preserve these immutable constraints: {constraints}."
                 f" {direction_text} Output intent: {output['rationale']} {quality_instruction}{repair}"
             )
+            result += ArkVideoGenerator._character_binding(state)
             return f"{result} --ratio {output['aspect_ratio']} --dur {output['duration_seconds']}" if include_output_hints else result
         output = validate_generation_spec(spec.generation_spec) if spec.generation_spec else fallback_generation_spec(spec.source_prompt, spec.reference_asset)
         shot_text = " ".join(
@@ -160,4 +161,15 @@ class ArkVideoGenerator:
             f"Preserve these immutable constraints: {constraints}."
             f" Output intent: {output['rationale']} {quality_instruction}{repair}"
         )
+        result += ArkVideoGenerator._character_binding(state)
         return f"{result} --ratio {output['aspect_ratio']} --dur {output['duration_seconds']}" if include_output_hints else result
+
+    @staticmethod
+    def _character_binding(state):
+        bindings = [{'character': a.get('character_name'), 'reference': '@' + a['name']}
+                    for a in state.creative_spec.multimodal_assets if a.get('generated_character_plan')]
+        if not bindings:
+            return ''
+        return ('\nCharacter identity references: ' + json.dumps(bindings, ensure_ascii=False) +
+                '. Each referenced sheet shows four views of ONE character. Use it only to preserve that character identity and wardrobe. '
+                'Render the storyboard as one normal full-frame video; never render a turnaround sheet, split-screen grid, labels or duplicate views of a person.')

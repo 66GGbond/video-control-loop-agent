@@ -42,9 +42,7 @@
   async function workspace(name,remember=true) {
     name=name==='canvas'?'canvas':'vcl';document.body.dataset.workspace=name;
     $('vcl-workspace').hidden=name!=='vcl';root.hidden=name!=='canvas';
-    const modelPanel=$('model-selection-panel');
-    if(name==='canvas')$('creative-agent-feed').insertBefore(modelPanel,$('agent-video-action'));
-    else $('vcl-workspace').insertBefore(modelPanel,$('project-status-panel'));
+    // Generation details belong to the main workspace; the float stays conversational.
     document.querySelectorAll('[data-workspace].nav-page').forEach(button=>{
       const active=button.dataset.workspace===name;button.classList.toggle('active',active);
       if(active)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current');
@@ -248,7 +246,7 @@
   function showMenu(event) {
     if(!doc)return;event.preventDefault();const p=local(event);addPoint=point(event);
     const menu=$('canvas-menu');menu.replaceChildren();
-    for(const kind of ['text','image','image_task','video','audio','task','note']) {
+    for(const kind of ['text','image','image_task','audio','task','note']) {
       const item=document.createElement('button');item.type='button';item.setAttribute('role','menuitem');item.innerHTML=icon(kinds[kind]);const label=document.createElement('span');label.textContent=labels[kind];item.append(label);
       item.addEventListener('click',()=>{menu.hidden=true;create(kind);});menu.append(item);
     }
@@ -256,7 +254,6 @@
   }
   function create(kind) {
     if(!loaded)return;
-    if(kind==='video'){$('canvas-video-dialog').showModal();return;}
     if(kind==='image'||kind==='audio'){const input=$('canvas-file-input');input.accept=kind==='image'?'image/png,image/jpeg,image/webp':'audio/mpeg,audio/mp3,audio/wav,audio/x-wav';input.click();return;}
     add(kind);
   }
@@ -322,7 +319,7 @@
   document.addEventListener('keyup',event=>{if(event.key===' '){space=false;updateControls();}});
   window.addEventListener('blur',()=>{space=false;gesture=null;stage.classList.remove('is-panning');$('canvas-marquee').hidden=true;updateControls();});
   window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue='';}});
-  for(const kind of ['text','image','image_task','video','audio','task','note'])$(kind==='image_task'?'canvas-add-image-task':'canvas-add-'+kind).addEventListener('click',()=>{addPoint=null;create(kind);});
+  for(const kind of ['text','image','image_task','audio','task','note'])$(kind==='image_task'?'canvas-add-image-task':'canvas-add-'+kind).addEventListener('click',()=>{addPoint=null;create(kind);});
   $('canvas-undo').addEventListener('click',()=>historyMove(undo,redo));$('canvas-redo').addEventListener('click',()=>historyMove(redo,undo));
   $('canvas-select').addEventListener('click',()=>{tool='select';updateControls();});$('canvas-pan').addEventListener('click',()=>{tool='pan';updateControls();});
   $('canvas-zoom-in').addEventListener('click',()=>{if(doc)zoom(doc.viewport.zoom*1.2);});$('canvas-zoom-out').addEventListener('click',()=>{if(doc)zoom(doc.viewport.zoom/1.2);});$('canvas-zoom').addEventListener('click',()=>zoom(1));$('canvas-fit').addEventListener('click',fit);
@@ -335,7 +332,7 @@
     for(const file of files) {
       try {
         const isImage=file.type.startsWith('image/');
-        if(!isImage&&!['audio/mpeg','audio/mp3','audio/wav','audio/x-wav'].includes(file.type))throw new Error('Use images, MP3 or WAV. Add videos with a public HTTPS URL.');
+        if(!isImage&&!['audio/mpeg','audio/mp3','audio/wav','audio/x-wav'].includes(file.type))throw new Error('Use images, MP3 or WAV.');
         const asset=await window.VCLBridge.readMedia(file);asset.media_type=isImage?'image':'audio';
         if(isImage){asset.preview_data_url=asset.data_url;delete asset.data_url;}
         add(asset.media_type,{asset,title:file.name},{x:base.x+offset,y:base.y+offset});offset+=44;
@@ -345,17 +342,6 @@
   $('canvas-file-input').addEventListener('change',event=>{importFiles([...event.target.files]);event.target.value='';});
   stage.addEventListener('dragover',event=>{if(event.dataTransfer.types.includes('Files'))event.preventDefault();});
   stage.addEventListener('drop',event=>{event.preventDefault();if(!doc)return;addPoint=point(event);importFiles([...event.dataTransfer.files]);});
-  $('canvas-video-close').addEventListener('click',()=>$('canvas-video-dialog').close());
-  $('canvas-video-form').addEventListener('submit',event=>{
-    event.preventDefault();try {
-      const url=new URL($('canvas-video-url').value),duration=Number($('canvas-video-duration').value);
-      if(url.protocol!=='https:'||url.username||url.password||!Number.isFinite(duration)||duration<2||duration>30)throw new Error('Use a public HTTPS URL and a duration of 2–30 seconds.');
-      const name=decodeURIComponent(url.pathname.split('/').at(-1))||'reference.mp4';
-      if(name.length>120)throw new Error('Reference filename is too long.');
-      add('video',{title:name,asset:{name,media_type:'video',mime_type:name.toLowerCase().endsWith('.mov')?'video/quicktime':'video/mp4',url:url.href,duration_seconds:duration,size:'0',role:'reference_video'}});
-      $('canvas-video-dialog').close();$('canvas-video-form').reset();
-    }catch(error){notify(error.message);}
-  });
   function exportBoard() {
     if(!doc)return;const url=URL.createObjectURL(new Blob([JSON.stringify(doc,null,2)],{type:'application/json'}));
     const link=document.createElement('a');link.href=url;link.download=(doc.title.replace(/[^\p{L}\p{N}_-]+/gu,'_')||'canvas')+'.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);

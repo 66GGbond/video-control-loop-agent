@@ -51,10 +51,41 @@ class LocalServerTests(unittest.TestCase):
     def plan(self, visitor):
         state = create_demo_state("A cat resting on a sofa for 15 seconds.")
         state.status, state.current_version_id = "awaiting_first_video", "none"
+        state.creative_spec.character_reference_plan = {"required": False, "status": "skipped", "characters": []}
         # Match request serialization: an earlier response may still be finishing.
         lock = server.VISITOR_LOCKS[int(hashlib.sha256(visitor.encode()).hexdigest(), 16) % len(server.VISITOR_LOCKS)]
         with lock:
             self.store.save(visitor, state)
+
+    def test_character_stage_gates_video_and_reset_during_image_work(self):
+        from backend.app.image_tasks import ImageTasks
+        visitor = self.session(); self.plan(visitor)
+        state = self.store.load(visitor)
+        state.creative_spec.character_reference_plan = {'id':'p1','required':True,'status':'generating','characters':[{'id':'C1','name':'Hero','task_id':'character-p1-C1'}]}
+        self.store.save(visitor,state)
+        ImageTasks(self.store).put(visitor,'character-p1-C1',{'status':'running'})
+        with patch.object(server.VIDEO_GENERATOR,'submit') as submit:
+            status,data=self.request('/api/generate-video',{})
+            self.assertEqual(status,400,data); submit.assert_not_called()
+        self.assertEqual(self.request('/api/reset',{})[0],409)
+        self.assertEqual(self.request('/api/revise-brief',{'instruction':'New setting'})[0],409)
+        ImageTasks(self.store).put(visitor,'character-p1-C1',{'status':'uncertain'})
+        self.assertEqual(self.request('/api/character-references')[1]['creative_spec']['character_reference_plan']['status'],'uncertain')
+        self.assertEqual(self.request('/api/reset',{})[0],200)
+
+    def test_character_assessment_and_default_parameter_edits_persist(self):
+        from backend.app.agent.model_catalog import SEEDANCE_25
+        visitor = self.session(); self.plan(visitor)
+        state=self.store.load(visitor);state.creative_spec.character_reference_plan={};self.store.save(visitor,state)
+        with patch.dict('os.environ',{'ARK_API_KEY':'test','VIDEO_PROVIDER':'auto','SEEDANCE_25_API_KEY':'test'}), patch('backend.app.character_references.request_json',return_value={'required':False,'characters':[]}), patch('backend.app.agent.model_router.request_json',side_effect=ValueError):
+            status,data=self.request('/api/plan-character-references',{})
+            self.assertEqual(status,200,data)
+            self.assertEqual(data['creative_spec']['character_reference_plan']['status'],'skipped')
+            status,data=self.request('/api/configure-generation',{'duration_seconds':12,'aspect_ratio':'9:16','quality_target':'high'})
+            self.assertEqual(status,200,data)
+            self.assertTrue(data['creative_spec']['video_model_selection']['confirmed'])
+            self.assertEqual(data['creative_spec']['video_model_selection']['selected_model'],SEEDANCE_25)
+            self.assertEqual(self.request('/api/state')[1]['creative_spec']['shots'][-1]['end_seconds'],12)
 
     def test_planning_has_no_trial_gate(self):
         state = create_demo_state()

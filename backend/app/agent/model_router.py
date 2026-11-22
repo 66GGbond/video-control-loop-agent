@@ -55,6 +55,9 @@ def recommend(state):
                 raise ValueError('Unsupported price or audio-quality claim')
             result.update(recommended_model=decision['recommended_model'],reason=decision['reason'],tradeoffs=tradeoffs[:5],alternatives=alternatives[:3],source='doubao_seed_2_1_pro')
         except (ValueError,OSError,KeyError,TypeError): pass
+    preferred=previous.get('user_model')
+    if preferred and any(c['model_id']==preferred and c['eligible'] for c in eligible):
+        result.update(selected_model=preferred,user_model=preferred)
     state.creative_spec.video_model_selection=result
     state.history.append({'at':'local-demo','phase':'reason','event':'video_model_recommended','payload':{'recommended_model':result['recommended_model'],'reason':result['reason'],'source':result['source'],'excluded':[{'model_id':c['model_id'],'reasons':c['exclusion_reasons']} for c in cards if not c['eligible']]}})
     return result

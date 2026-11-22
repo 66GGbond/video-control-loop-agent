@@ -119,6 +119,7 @@ class CreativeSpec:
     evidence_sampling: Dict[str, Any] = field(default_factory=dict)
     generation_spec: Dict[str, Any] = field(default_factory=dict)
     video_model_selection: Dict[str, Any] = field(default_factory=dict)
+    character_reference_plan: Dict[str, Any] = field(default_factory=dict)
     # The semantic pacing plan is the source of truth for the provider-bound
     # duration and evaluation windows. `production_strategy` exposes the
     # Agent's explicit single-clip feasibility decision.

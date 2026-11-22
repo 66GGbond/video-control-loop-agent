@@ -65,6 +65,8 @@ if os.getenv("VIDEO_AGENT_SKIP_LOCAL_ENV") != "1":
     load_local_env(ROOT / ".env")
 SESSIONS = SessionStore(RUNTIME)
 from .image_tasks import ImageTasks
+from . import character_references as characters
+from .generation_settings import configure as configure_generation
 VISITOR_LOCKS = [threading.RLock() for _ in range(128)]
 ORCHESTRATOR = create_orchestrator()
 CONTROL_PLANNER = ArkControlPlanner()
@@ -94,11 +96,11 @@ def start_user_directed_revision(original: ProjectState, instruction: str, langu
     validate_brief_duration(revised_prompt)
     revised = create_enriched_project_state(
         revised_prompt,
-        original.creative_spec.reference_asset,
+        characters.source_reference(original.creative_spec),
         CONTROL_PLANNER,
         CONTEXT_AGENT,
         target_market,
-        original.creative_spec.multimodal_assets,
+        characters.source_assets(original.creative_spec),
         ui_language=language or original.creative_spec.enriched_context.get("ui_language", "zh"),
     )
 
@@ -180,6 +182,9 @@ class DemoHandler(SimpleHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/state":
             return self._json(HTTPStatus.OK, present(self.state))
+        if path == "/api/character-references":
+            characters.sync(self.state, SESSIONS, self.visitor_id)
+            return self._json(HTTPStatus.OK, present(self.state))
         if path == "/api/canvas":
             return self._json(HTTPStatus.OK, SESSIONS.load_canvas(self.visitor_id))
         if path.startswith('/api/image-task/'):
@@ -200,6 +205,23 @@ class DemoHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         try:
+            if path in {'/api/create-project', '/api/reset', '/api/revise-brief', '/api/confirm-context'} and characters.running(self.state, SESSIONS, self.visitor_id):
+                return self._json(HTTPStatus.CONFLICT, {'error': '人物四视图正在生成，请等待结果后再修改或重置项目。'})
+            if path == '/api/attach-character-references':
+                characters.attach(self.state, SESSIONS, self.visitor_id, self._read_json(), self._normalise_multimodal_assets)
+                return self._json(HTTPStatus.OK, present(self.state))
+            if path in {'/api/plan-character-references', '/api/generate-character-references'}:
+                payload = self._read_json()
+                if path == '/api/plan-character-references':
+                    characters.prepare(self.state, SESSIONS, self.visitor_id)
+                else:
+                    characters.start(self.state, SESSIONS, self.visitor_id, payload.get('plan_id'), payload.get('model_id'))
+                return self._json(HTTPStatus.OK, present(self.state))
+            if path == '/api/configure-generation':
+                if os.getenv('VIDEO_PROVIDER') != 'auto':
+                    raise ValueError('Multi-model routing is not enabled')
+                configure_generation(self.state, self._read_json())
+                return self._json(HTTPStatus.OK, present(self.state))
             if path in {'/api/recommend-image-model','/api/generate-image'}:
                 payload=self._read_json();node=payload.get('node_id')
                 if not isinstance(node,str):raise ValueError('Select an image task')
@@ -264,11 +286,11 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 original = self.state
                 self.state = create_enriched_project_state(
                     self.state.creative_spec.source_prompt,
-                    self.state.creative_spec.reference_asset,
+                    characters.source_reference(self.state.creative_spec),
                     CONTROL_PLANNER,
                     CONTEXT_AGENT,
                     target_market,
-                    self.state.creative_spec.multimodal_assets,
+                    characters.source_assets(self.state.creative_spec),
                     ui_language=payload.get("language", original.creative_spec.enriched_context.get("ui_language", "zh")),
                 )
                 record_exchange(self.state, target_market, original)
@@ -333,11 +355,11 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     validate_brief_duration(revised_prompt)
                     self.state = create_enriched_project_state(
                         revised_prompt,
-                        original.creative_spec.reference_asset,
+                        characters.source_reference(original.creative_spec),
                         CONTROL_PLANNER,
                         CONTEXT_AGENT,
                         target_market,
-                        original.creative_spec.multimodal_assets,
+                        characters.source_assets(original.creative_spec),
                         ui_language=payload.get("language", original.creative_spec.enriched_context.get("ui_language", "zh")),
                     )
                     record_exchange(self.state, instruction, previous)
@@ -367,6 +389,8 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 })
                 return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/generate-video":
+                characters.sync(self.state, SESSIONS, self.visitor_id)
+                characters.ensure_ready(self.state)
                 if (self.state.creative_spec.production_strategy or {}).get("mode") == "needs_segmentation":
                     return self._json(HTTPStatus.BAD_REQUEST, {
                         "error": "This brief requires a multi-segment production plan. The single-clip generator is intentionally blocked rather than compressing the story."

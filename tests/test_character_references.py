@@ -1,0 +1,136 @@
+import base64
+import os
+import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
+
+from backend.app import character_references as chars
+from backend.app.demo import create_demo_state
+from backend.app.image_tasks import ImageTasks
+from backend.app.sessions import SessionStore
+from backend.app.server import DemoHandler
+from backend.app.tools.seedream import PRO
+from backend.app.tools.seedance import SeedanceVideoGenerator
+from backend.app.agent.model_catalog import SEEDANCE_25
+from backend.app.agent.prompt_compiler import PromptCompiler
+from backend.app.generation_settings import configure
+
+
+class CharacterReferencesTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        self.store = SessionStore(Path(self.tmp.name))
+        self.visitor, _ = self.store.visitor('')
+        self.state = create_demo_state('A campus drama with a heroine and a rival.')
+        self.state.status = 'planning_ready'; self.state.current_version_id = 'none'
+        self.env = patch.dict(os.environ, {'ARK_API_KEY':'test', 'VIDEO_PROVIDER':'auto', 'SEEDREAM_PRO_API_KEY':'test', 'SEEDREAM_FLASH_API_KEY':'', 'SEEDANCE_25_API_KEY':'test', 'SEEDANCE_20_API_KEY':'', 'MINIMAX_API_KEY':''})
+        self.env.start(); self.addCleanup(self.env.stop)
+        self.people = {'required':True, 'characters':[
+            {'name':'女主角','appearance':'短发，深蓝校服','reference_names':[]},
+            {'name':'对手','appearance':'长发，灰色校服','reference_names':[]}]}
+
+    def prepare(self):
+        with patch('backend.app.character_references.request_json',return_value=self.people), patch('backend.app.image_tasks.request_json',return_value={'recommended_model':PRO,'reason':'Detailed consistent turnaround.'}):
+            return chars.prepare(self.state,self.store,self.visitor)
+
+    def start(self):
+        plan=self.prepare()
+        with patch.object(ImageTasks,'_launch') as launch:
+            chars.start(self.state,self.store,self.visitor,plan['id'],PRO)
+            self.assertEqual(launch.call_count,2)
+        return plan
+
+    def complete(self, plan):
+        service=ImageTasks(self.store)
+        for person in plan['characters']:
+            job=service.get(self.visitor,person['task_id'])
+            with self.store.connect() as db:
+                db.execute('INSERT INTO image_outputs VALUES (?,?,?,?)',(self.visitor,job['run_id'],'image/png',b'\x89PNG\r\n\x1a\nfixture'))
+            job.update(status='succeeded',output_url='/api/image-output/'+job['run_id']);service.put(self.visitor,person['task_id'],job)
+        chars.sync(self.state,self.store,self.visitor)
+
+    def test_agent_assesses_and_caches_without_keyword_fallback(self):
+        plan=self.prepare();self.assertTrue(plan['required']);self.assertEqual(len(plan['characters']),2)
+        with patch('backend.app.character_references.request_json') as model:
+            self.assertIs(chars.assess(self.state),plan);model.assert_not_called()
+        self.state.creative_spec.character_reference_plan={}
+        with patch('backend.app.character_references.request_json',return_value={'required':False,'characters':[]}):
+            self.assertEqual(chars.assess(self.state)['status'],'skipped')
+        with patch.dict(os.environ,{'ARK_API_KEY':''}):
+            self.state.creative_spec.character_reference_plan={}
+            with self.assertRaises(ValueError):chars.assess(self.state)
+        self.assertEqual(self.state.creative_spec.character_reference_plan,{})
+
+    def test_invalid_characters_and_unrelated_reference_are_rejected(self):
+        for value in [{'required':True,'characters':[]},{'required':False,'characters':self.people['characters']},
+                      {'required':True,'characters':[{'name':'a','appearance':'b','reference_names':['invented.png']}]},
+                      {'required':True,'characters':[self.people['characters'][0]]*2}]:
+            with self.assertRaises(ValueError):chars.validate_plan(value,[])
+
+    def test_job_is_idempotent_and_recovers_without_resubmission(self):
+        plan=self.start()
+        with patch.object(ImageTasks,'_launch') as launch:
+            chars.start(self.state,self.store,self.visitor,plan['id'],PRO)
+            launch.assert_not_called()
+            ImageTasks(self.store).recover();chars.sync(self.state,self.store,self.visitor)
+            self.assertEqual(plan['status'],'uncertain')
+            chars.start(self.state,self.store,self.visitor,plan['id'],PRO);launch.assert_not_called()
+        with self.assertRaises(ValueError):chars.ensure_ready(self.state)
+
+    def test_failed_job_and_owner_isolation(self):
+        plan=self.start();person=plan['characters'][0];service=ImageTasks(self.store)
+        job=service.get(self.visitor,person['task_id']);job['status']='failed';service.put(self.visitor,person['task_id'],job)
+        self.assertEqual(service.get('another-visitor',person['task_id']),{})
+        self.assertTrue(chars.running(self.state,self.store,self.visitor))
+        self.complete(plan)
+        self.assertIsNone(service.output('another-visitor',job['run_id']))
+
+    def test_completed_previews_bind_exact_characters_and_provider_inputs(self):
+        plan=self.start();self.complete(plan)
+        self.assertEqual(plan['status'],'generated')
+        self.assertEqual(self.state.creative_spec.multimodal_assets,[])
+        with self.assertRaises(ValueError):chars.ensure_ready(self.state)
+        previews=[{'character_id':p['id'],'run_id':p['output_url'].rsplit('/',1)[-1], 'data_url':'data:image/jpeg;base64,'+base64.b64encode(b'jpeg-preview').decode()} for p in plan['characters']]
+        payload={'plan_id':plan['id'],'previews':previews}
+        bad={**payload,'previews':[{**previews[0],'run_id':'other-visitor'},previews[1]]}
+        with self.assertRaises(ValueError):chars.attach(self.state,self.store,self.visitor,bad,DemoHandler._normalise_multimodal_assets)
+        self.assertEqual(self.state.creative_spec.multimodal_assets,[])
+        chars.attach(self.state,self.store,self.visitor,payload,DemoHandler._normalise_multimodal_assets)
+        chars.attach(self.state,self.store,self.visitor,payload,DemoHandler._normalise_multimodal_assets)
+        chars.ensure_ready(self.state)
+        self.assertEqual(len(self.state.creative_spec.multimodal_assets),2)
+        self.assertEqual([a['character_name'] for a in self.state.creative_spec.multimodal_assets],['女主角','对手'])
+        with patch('backend.app.agent.model_router.request_json',side_effect=ValueError):configure(self.state,{})
+        PromptCompiler().compile(self.state)
+        body=SeedanceVideoGenerator(SEEDANCE_25)._request_body(self.state)
+        self.assertEqual(sum(c['type']=='image_url' for c in body['content']),2)
+        self.assertIn('女主角',body['content'][0]['text']);self.assertIn('never render a turnaround sheet',body['content'][0]['text'])
+        self.assertEqual(len(self.store.load(self.visitor).creative_spec.character_reference_plan['characters']),2)
+
+    def test_settings_edit_updates_timing_and_default_selection_atomically(self):
+        with patch('backend.app.agent.model_router.request_json',side_effect=ValueError):
+            result=configure(self.state,{'duration_seconds':12,'aspect_ratio':'9:16','quality_target':'high'})
+        self.assertTrue(result['confirmed']);self.assertEqual(result['selected_model'],SEEDANCE_25)
+        self.assertEqual(self.state.creative_spec.shots[-1]['end_seconds'],12)
+        self.assertEqual(sum(s['duration_seconds'] for s in self.state.creative_spec.shots),12)
+        PromptCompiler().compile(self.state)
+        self.assertEqual(self.state.creative_spec.generation_contract['output_spec']['aspect_ratio'],'9:16')
+        original=self.state.creative_spec
+        with self.assertRaises(ValueError):configure(self.state,{'model_id':'unknown','model_changed':True,'duration_seconds':9})
+        self.assertIs(self.state.creative_spec,original)
+        self.assertEqual(original.generation_spec['duration_seconds'],12)
+        for invalid in [True,3,31,6.5]:
+            with self.assertRaises(ValueError):configure(self.state,{'duration_seconds':invalid})
+
+    def test_manual_model_choice_persists_until_incompatible_with_new_settings(self):
+        from backend.app.agent.model_catalog import SEEDANCE_20
+        with patch.dict(os.environ,{'SEEDANCE_20_API_KEY':'test'}), patch('backend.app.agent.model_router.request_json',side_effect=ValueError):
+            choice=configure(self.state,{'model_changed':True,'model_id':SEEDANCE_20})
+            self.assertEqual(choice['user_model'],SEEDANCE_20)
+            choice=configure(self.state,{'aspect_ratio':'9:16'})
+            self.assertEqual(choice['selected_model'],SEEDANCE_20)
+            choice=configure(self.state,{'duration_seconds':30})
+            self.assertEqual(choice['selected_model'],SEEDANCE_25)
+            self.assertNotIn('user_model',choice)
+            self.assertEqual(self.state.creative_spec.shots[-1]['end_seconds'],30)

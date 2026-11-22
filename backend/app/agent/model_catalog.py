@@ -69,6 +69,7 @@ def candidate_cards(state):
         warnings=[AUDIO_NOTICE] if counts['audio'] or any(t in state.creative_spec.source_prompt.lower() for t in ('对白','口型','台词','配音','lip sync','dialogue','soundtrack')) else []
         if card['model_id']==H3:
             warnings += ['H3 按你的低预算偏好进入候选，实际费用以平台账单为准；复杂音频要求建议人工复核或考虑其他候选。',card['adapter_notice']]
+        card['resolution'] = os.getenv('MINIMAX_VIDEO_RESOLUTION', '768P').upper() if card['model_id']==H3 else '720p'
         card.update(eligible=not errors,exclusion_reasons=errors,warnings=warnings)
         output.append(card)
     return output
