@@ -184,6 +184,7 @@ class TrialHTTPTests(unittest.TestCase):
         status, data = self.request("/api/demo", {})
         self.assertEqual(status, 200)
         self.assertEqual(len(data["evaluation_history"]), 2)
+        self.assertTrue(data["demo_mode"])
         self.assertFalse(data["trial"]["authorized"])
 
     def test_visitors_cannot_read_each_others_projects_or_videos(self):

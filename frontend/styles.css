@@ -140,3 +140,5 @@ h2 { font-size: 16px; margin: 0; letter-spacing: -.01em; }
 @media(max-width:640px) {.trial-bar {align-items:flex-start; flex-direction:column;} .trial-bar > div {flex-wrap:wrap;}}
 .log-row > *, .log-panel {min-width:0;}
 .log-detail {overflow-wrap:anywhere;}
+
+.creative-agent.collapsed {visibility:hidden;}

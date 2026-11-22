@@ -194,6 +194,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 if self.state.status == "generating_video":
                     raise AccessError("视频生成中，请等待生成结果。", 409, "generation_pending")
                 self.state = create_demo_state()
+                self.state.demo_mode = True
                 agent = AgentOrchestrator(FixtureVisionEvaluator(), FixturePlanner(), prompt_compiler=PromptCompiler())
                 agent.run_once(self.state)
                 agent.simulate_repaired_upload(self.state)

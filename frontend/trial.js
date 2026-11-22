@@ -100,8 +100,7 @@ async function trialRequest(path, options = {}, retry = false) {
     throw new Error(body.error || "请求失败，请稍后再试。");
   }
   if (path === "/api/generate-video") updateTrial(body.trial, `视频生成中，已预留 ${body.trial.reserved_seconds} 秒额度。剩余视频额度：${body.trial.remaining_seconds} 秒。`);
-  if (path === "/api/demo") document.querySelector("#demo-notice").hidden = false;
-  if (path === "/api/reset" || path === "/api/create-project") document.querySelector("#demo-notice").hidden = true;
+  if ("demo_mode" in body) document.querySelector("#demo-notice").hidden = !body.demo_mode;
   if (path === "/api/refresh-generation" && body.trial?.authorized) {
     if (body.status === "generated_video_ready") updateTrial(body.trial, `视频已生成，剩余视频额度 ${body.trial.remaining_seconds} 秒。${body.trial.remaining_seconds === 0 ? "体验码的视频额度已用完，感谢体验。" : ""}`);
     else if (body.status === "generating_video") updateTrial(body.trial, `视频生成中，已预留 ${body.trial.reserved_seconds} 秒额度。剩余视频额度：${body.trial.remaining_seconds} 秒。`);
