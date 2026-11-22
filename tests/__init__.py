@@ -1,7 +1,7 @@
 """Keep fixture tests offline even when the checkout has real local API keys."""
 import os
 
-for _key in ("ARK_API_KEY", "MINIMAX_API_KEY", "SEEDANCE_25_API_KEY", "SEEDANCE_20_API_KEY"):
+for _key in ("ARK_API_KEY", "MINIMAX_API_KEY", "SEEDANCE_25_API_KEY", "SEEDANCE_20_API_KEY", "SEEDREAM_PRO_API_KEY", "SEEDREAM_FLASH_API_KEY"):
     os.environ[_key] = ""
 
 # Model selection must also stay deterministic instead of inheriting .env.

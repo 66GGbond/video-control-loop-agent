@@ -11,3 +11,7 @@ assert.equal(C.zoomAt(doc.viewport,10,0,0).zoom,2);assert.equal(C.zoomAt(doc.vie
 const copy=C.clone(doc);copy.nodes[0].text='changed';copy.viewport.x=999;assert.equal(doc.nodes[0].text,'A red car stops.');assert.equal(doc.viewport.x,120);
 const fitted=C.fit([{x:-500,y:-200},{x:800,y:600}],1200,800);assert(fitted.zoom>=.2&&fitted.zoom<=1.15);assert(Number.isFinite(fitted.x));
 console.log('PASS: graph dependencies, bindings, cycle guards, unsupported references, viewport and history isolation');
+const imageGraph={nodes:[{id:'draw',kind:'image_task',text:'Old illustration prompt'},{id:'result',kind:'image',image_run_id:'a'.repeat(32),asset:{name:'result.png',preview_data_url:'data:image/png;base64,AA=='}},{id:'video',kind:'task',text:'Animate in 6 seconds'}],edges:[{source:'draw',target:'result'},{source:'result',target:'video'}]};
+assert(!C.bundle(imageGraph,'video').text.includes('Old illustration'));
+assert(!C.canConnect(imageGraph,'video','draw'));
+assert.throws(()=>C.bundle({...imageGraph,edges:[{source:'draw',target:'video'}]},'video'),/upstream image/);

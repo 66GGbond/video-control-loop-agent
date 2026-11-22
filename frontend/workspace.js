@@ -3,8 +3,8 @@
   const C=window.CanvasCore, $=id=>document.getElementById(id);
   const root=$('canvas-workspace'),stage=$('canvas-stage'),world=$('canvas-world'),nodes=$('canvas-nodes'),edges=$('canvas-edges');
   const icon=name=>`<svg class="ui-icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
-  const labels={text:'Text',note:'Note',image:'Image',audio:'Audio',video:'Video reference',task:'Video task',output:'Video version'};
-  const kinds={text:'text',note:'note',image:'image',audio:'audio',video:'video',task:'task',output:'video'};
+  const labels={text:'Text',note:'Note',image:'Image',audio:'Audio',video:'Video reference',task:'Video task',image_task:'Image generation',output:'Video version'};
+  const kinds={text:'text',note:'note',image:'image',audio:'audio',video:'video',task:'task',image_task:'image-task',output:'video'};
   let doc=null,revision=0,loaded=false,loading=null,dirty=false,saving=false,saveTimer=null,changeId=0,saveError=false;
   let selection=new Set(),selectedEdge=null,connecting=null,tool='select',showEdges=true,space=false,gesture=null,addPoint=null;
   let undo=[],redo=[],toastTimer=null,textEditSnapshot=null,currentState=null;
@@ -30,7 +30,7 @@
     loading=(async()=>{
       const response=await fetch('/api/canvas');if(!response.ok)throw new Error('Canvas could not be loaded.');
       const data=await response.json();doc=data.document;revision=data.revision;loaded=true;status('saved');$('canvas-title').value=doc.title==='Untitled canvas'?'':doc.title;
-      render();
+      render();window.CanvasImages.restore();
     })().finally(()=>loading=null);
     return loading;
   }
@@ -123,8 +123,8 @@
       const title=document.createElement('input');title.value=node.title;title.maxLength=120;title.setAttribute('aria-label','Node title');bindEdit(title,node,'title');header.append(title);
       const actions=document.createElement('div');actions.className='canvas-node-actions';actions.append(button('copy','Duplicate',()=>duplicate([node.id])),button('trash','Delete',()=>remove([node.id])));header.append(actions);el.append(header);
       const body=document.createElement('div');body.className='canvas-node-body';
-      if(['text','note','task'].includes(node.kind)) {
-        const input=document.createElement('textarea');input.value=node.text;input.maxLength=12000;input.setAttribute('aria-label',labels[node.kind]);input.placeholder=node.kind==='task'?'Describe this video…':node.kind==='note'?'Note…':'Write a brief…';bindEdit(input,node,'text');body.append(input);
+      if(['text','note','task','image_task'].includes(node.kind)) {
+        const input=document.createElement('textarea');input.value=node.text;input.maxLength=12000;input.setAttribute('aria-label',labels[node.kind]);input.placeholder=node.kind==='image_task'?'Describe this image…':node.kind==='task'?'Describe this video…':node.kind==='note'?'Note…':'Write a brief…';bindEdit(input,node,'text');body.append(input);
       } else if(node.kind==='image') {
         const img=document.createElement('img');img.src=node.asset.preview_data_url||node.asset.data_url;img.alt=node.asset.name;img.draggable=false;body.append(img);
         img.addEventListener('dblclick',event=>{event.stopPropagation();showImage(node);});
@@ -149,6 +149,8 @@
         const footer=document.createElement('div');footer.className='canvas-task-footer';const label=document.createElement('span');label.textContent='VCL Agent';
         const run=document.createElement('button');run.type='button';run.innerHTML='<span>Send to Agent</span>'+icon('arrow');run.addEventListener('click',()=>send(node.id));footer.append(label,run);body.append(footer);
       }
+      if(node.kind==='image_task')window.CanvasImages.decorate(node,body);
+      if(node.kind==='image'&&node.image_run_id){const original=document.createElement('a');original.href='/api/image-output/'+node.image_run_id;original.download='seedream-'+node.image_run_id+'.png';original.className='image-original';original.textContent='Original image';body.append(original);}
       el.append(body);
       for(const side of ['in','out']) {
         const port=document.createElement('button');port.type='button';port.className='canvas-port';port.dataset.port=side;port.title=side==='in'?'Connect input':'Connect output';port.setAttribute('aria-label',port.title);
@@ -212,7 +214,7 @@
   function showMenu(event) {
     if(!doc)return;event.preventDefault();const p=local(event);addPoint=point(event);
     const menu=$('canvas-menu');menu.replaceChildren();
-    for(const kind of ['text','image','video','audio','task','note']) {
+    for(const kind of ['text','image','image_task','video','audio','task','note']) {
       const item=document.createElement('button');item.type='button';item.setAttribute('role','menuitem');item.innerHTML=icon(kinds[kind]);const label=document.createElement('span');label.textContent=labels[kind];item.append(label);
       item.addEventListener('click',()=>{menu.hidden=true;create(kind);});menu.append(item);
     }
@@ -286,7 +288,7 @@
   document.addEventListener('keyup',event=>{if(event.key===' '){space=false;updateControls();}});
   window.addEventListener('blur',()=>{space=false;gesture=null;stage.classList.remove('is-panning');$('canvas-marquee').hidden=true;updateControls();});
   window.addEventListener('beforeunload',event=>{if(dirty){event.preventDefault();event.returnValue='';}});
-  for(const kind of ['text','image','video','audio','task','note'])$('canvas-add-'+kind).addEventListener('click',()=>{addPoint=null;create(kind);});
+  for(const kind of ['text','image','image_task','video','audio','task','note'])$(kind==='image_task'?'canvas-add-image-task':'canvas-add-'+kind).addEventListener('click',()=>{addPoint=null;create(kind);});
   $('canvas-undo').addEventListener('click',()=>historyMove(undo,redo));$('canvas-redo').addEventListener('click',()=>historyMove(redo,undo));
   $('canvas-select').addEventListener('click',()=>{tool='select';updateControls();});$('canvas-pan').addEventListener('click',()=>{tool='pan';updateControls();});
   $('canvas-zoom-in').addEventListener('click',()=>{if(doc)zoom(doc.viewport.zoom*1.2);});$('canvas-zoom-out').addEventListener('click',()=>{if(doc)zoom(doc.viewport.zoom/1.2);});$('canvas-zoom').addEventListener('click',()=>zoom(1));$('canvas-fit').addEventListener('click',fit);
@@ -356,6 +358,7 @@
       const data=await response.json();if(!response.ok)throw new Error(data.error);add(data.asset.media_type,{asset:data.asset,title:data.asset.name});
     },asset.preview_data_url));
     (state.version_reviews||[]).filter(review=>review.asset?.local_video_url).forEach(review=>item(review.version_id.toUpperCase(),'video',()=>add('output',{title:review.version_id.toUpperCase(),version_id:review.version_id,project_id:state.project_id,text:review.status}),review.asset.poster_data_url));
+    window.CanvasImages.addLibraryItems(list);
     if(!list.children.length){const empty=document.createElement('p');empty.className='canvas-library-empty';empty.textContent='No project assets yet';list.append(empty);}
   }
   $('canvas-assets').addEventListener('click',()=>{$('canvas-library').hidden=!$('canvas-library').hidden;if(!$('canvas-library').hidden)library();});$('canvas-library-close').addEventListener('click',()=>$('canvas-library').hidden=true);
@@ -369,6 +372,20 @@
     if(doc?.nodes.some(n=>n.kind==='output') && prior?.project_id!==currentState.project_id)render();
   });
   document.addEventListener('pointerdown',event=>{if(!event.target.closest('#canvas-menu')&&!event.target.closest('#canvas-stage'))$('canvas-menu').hidden=true;});
+  window.CanvasImages.mount({getDocument:()=>doc,render,notify,changed,add,checkpoint,
+    async flush(){clearTimeout(saveTimer);while(saving)await new Promise(resolve=>setTimeout(resolve,50));if(saveError)throw new Error('Save the canvas before generating.');await save();if(dirty)throw new Error('Save the canvas before generating.');},
+    async addResult(result,taskId){
+      if(doc.nodes.some(n=>n.image_run_id===result.run_id))return;
+      const task=doc.nodes.find(n=>n.id===taskId);
+      if(task?.image_result_id===result.run_id)return;
+      if(doc.nodes.length>=100){notify('Image saved in Project assets.');return;}
+      const response=await fetch('/api/image-output/'+result.run_id);if(!response.ok)throw new Error('Image unavailable');
+      const file=new File([await response.blob()],'seedream-'+result.run_id.slice(0,8)+'.png',{type:'image/png'});
+      const asset=await window.VCLBridge.readMedia(file);asset.media_type='image';asset.preview_data_url=asset.data_url;delete asset.data_url;
+      const node=add('image',{asset,title:asset.name,image_run_id:result.run_id},task?{x:task.x+344,y:task.y}:freePosition());
+      if(task&&node){task.image_result_id=result.run_id;if(doc.edges.length<250)doc.edges.push({source:task.id,target:node.id});changed();render();}
+    }
+  });
   function languageLabel() {$('workspace-language').textContent=I18n.language==='zh'?'EN':'ZH';}
   $('workspace-language').addEventListener('click',()=>I18n.setLanguage(I18n.language==='zh'?'en':'zh'));
   window.addEventListener('languagechange',languageLabel);languageLabel();

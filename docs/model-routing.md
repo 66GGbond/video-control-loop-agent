@@ -37,6 +37,6 @@ Seedance 2.5 参考视频/音频各自的总时长不超过 30 秒；2.0 为 15 
 
 `.env` 中 `VIDEO_PROVIDER=auto` 开启路由。两种 Seedance 分别使用 `SEEDANCE_25_API_KEY`、`SEEDANCE_20_API_KEY`；`ARK_API_KEY` 只供理解和决策，MiniMax 继续使用 `MINIMAX_API_KEY`。密钥不进入模型卡片、推荐请求、网页或 Git。
 
-生成与评估合同、素材 `@` 绑定、原子验收、风险取样、帧引用、Rubric、证据不足处理、修复次数和发布质量门均保留。独立图片生成尚未接入。
+生成与评估合同、素材 `@` 绑定、原子验收、风险取样、帧引用、Rubric、证据不足处理、修复次数和发布质量门均保留。画布图片生成已接入 Seedream 5.0 Pro / Flash，采用独立选型技能、专用密钥及用户确认；VCL Agent 的独立生图入口尚待产品需求。
 
 核对来源（2026-11-22）：[Seedance 参数与素材要求](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)、[Seedance 2.5 能力](https://docs.volcengine.com/docs/ark/seedance-2-5?lang=zh)、[MiniMax H3 官方接口](https://platform.minimax.cn/docs/api-reference/video-generation-v2-create)。任务只读鉴权不代表所有生成场景已经完成实测；接入检查没有自动创建付费视频任务。

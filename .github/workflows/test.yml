@@ -15,4 +15,4 @@ jobs:
           node-version: '22'
       - run: python3 -m unittest -q
       - run: node --check frontend/model-selection.js && node --check frontend/app.js && node --check frontend/i18n.js && node --check frontend/i18n-catalog.js
-      - run: node --check frontend/workspace.js && node --check frontend/canvas-core.js && node tests/canvas-core.test.cjs
+      - run: node --check frontend/workspace.js && node --check frontend/canvas-images.js && node --check frontend/canvas-core.js && node tests/canvas-core.test.cjs

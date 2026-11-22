@@ -54,6 +54,8 @@ class SessionStore:
                 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS visitors (id TEXT PRIMARY KEY, state TEXT);
                 CREATE TABLE IF NOT EXISTS canvases (visitor_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, document TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS image_tasks (visitor_id TEXT NOT NULL, node_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(visitor_id,node_id));
+                CREATE TABLE IF NOT EXISTS image_outputs (visitor_id TEXT NOT NULL, id TEXT NOT NULL, mime TEXT NOT NULL, data BLOB NOT NULL, PRIMARY KEY(visitor_id,id));
             """)
             db.execute("INSERT OR IGNORE INTO settings VALUES ('secret',?)", (secrets.token_hex(32),))
             self.secret = db.execute("SELECT value FROM settings WHERE key='secret'").fetchone()[0].encode()

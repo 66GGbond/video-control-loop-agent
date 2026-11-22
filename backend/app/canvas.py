@@ -33,11 +33,15 @@ def validate_canvas(raw, normalise_assets):
             raise ValueError("Invalid canvas node")
         ident = node.get("id")
         kind = node.get("kind")
-        if not isinstance(ident, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", ident) or ident in ids or kind not in {"text", "note", "image", "audio", "video", "task", "output"}:
+        if not isinstance(ident, str) or not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", ident) or ident in ids or kind not in {"text", "note", "image", "image_task", "audio", "video", "task", "output"}:
             raise ValueError("Invalid canvas node identity")
         ids.add(ident)
         item = {"id": ident, "kind": kind, "x": number(node.get("x"), -100000, 100000), "y": number(node.get("y"), -100000, 100000),
                 "title": text(node.get("title", ""), 120), "text": text(node.get("text", ""), 12000)}
+        for key in ('image_run_id','image_result_id'):
+            if key in node:
+                if not isinstance(node[key],str) or not re.fullmatch(r'[a-f0-9]{32}',node[key]):raise ValueError('Invalid image result identity')
+                item[key]=node[key]
         if kind in {"image", "audio", "video"}:
             raw_asset = node.get("asset")
             if not isinstance(raw_asset, dict):

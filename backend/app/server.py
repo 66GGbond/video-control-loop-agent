@@ -51,7 +51,7 @@ def load_local_env(path: Path) -> None:
         key, value = line.split("=", 1)
         key = key.strip()
         if key in {
-            "ARK_API_KEY", "ARK_MODEL", "SEEDANCE_25_API_KEY", "SEEDANCE_20_API_KEY",
+            "ARK_API_KEY", "ARK_MODEL", "SEEDANCE_25_API_KEY", "SEEDANCE_20_API_KEY", "SEEDREAM_PRO_API_KEY", "SEEDREAM_FLASH_API_KEY",
             "ARK_VIDEO_TEXT_MODEL", "ARK_VIDEO_REFERENCE_MODEL", "VIDEO_PROVIDER",
             "MINIMAX_API_KEY", "MINIMAX_VIDEO_MODEL", "MINIMAX_VIDEO_RESOLUTION", "MINIMAX_API_BASE_URL",
             "PORT",
@@ -62,6 +62,7 @@ def load_local_env(path: Path) -> None:
 if os.getenv("VIDEO_AGENT_SKIP_LOCAL_ENV") != "1":
     load_local_env(ROOT / ".env")
 SESSIONS = SessionStore(RUNTIME)
+from .image_tasks import ImageTasks
 VISITOR_LOCKS = [threading.RLock() for _ in range(128)]
 ORCHESTRATOR = create_orchestrator()
 CONTROL_PLANNER = ArkControlPlanner()
@@ -177,6 +178,16 @@ class DemoHandler(SimpleHTTPRequestHandler):
             return self._json(HTTPStatus.OK, present(self.state))
         if path == "/api/canvas":
             return self._json(HTTPStatus.OK, SESSIONS.load_canvas(self.visitor_id))
+        if path.startswith('/api/image-task/'):
+            return self._json(HTTPStatus.OK, ImageTasks(SESSIONS).get(self.visitor_id,path.rsplit('/',1)[-1]))
+        if path == '/api/image-results':
+            with SESSIONS.connect() as db:
+                rows=db.execute('SELECT id FROM image_outputs WHERE visitor_id=? ORDER BY rowid DESC',(self.visitor_id,)).fetchall()
+            return self._json(HTTPStatus.OK, {'results':[{'run_id':r[0], 'name':'Seedream '+r[0][:8]} for r in rows]})
+        if path.startswith('/api/image-output/'):
+            result=ImageTasks(SESSIONS).output(self.visitor_id,path.rsplit('/',1)[-1])
+            if not result:return self._json(HTTPStatus.NOT_FOUND,{'error':'Image unavailable'})
+            self.send_response(HTTPStatus.OK);self.send_header('Content-Type',result[0]);self.send_header('Content-Length',str(len(result[1])));self.end_headers();self.wfile.write(result[1]);return
         if path.startswith("/api/generated-video/"):
             return self._serve_generated_video(path.rsplit("/", 1)[-1])
         return super().do_GET()
@@ -185,6 +196,13 @@ class DemoHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         try:
+            if path in {'/api/recommend-image-model','/api/generate-image'}:
+                payload=self._read_json();node=payload.get('node_id')
+                if not isinstance(node,str):raise ValueError('Select an image task')
+                document=SESSIONS.load_canvas(self.visitor_id)['document'];service=ImageTasks(SESSIONS)
+                if path=='/api/recommend-image-model':result=service.recommend(self.visitor_id,node,document)
+                else:result=service.start(self.visitor_id,node,document,payload.get('choice_id'),payload.get('model_id'))
+                return self._json(HTTPStatus.ACCEPTED if result.get('status')=='running' else HTTPStatus.OK,result)
             if path == "/api/canvas":
                 from .canvas import validate_canvas
                 payload = self._read_json()
@@ -908,6 +926,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
 def run(port: int | None = None):
     port = port or int(os.getenv("PORT", "8000"))
     server = ThreadingHTTPServer(("127.0.0.1", port), DemoHandler)
+    ImageTasks(SESSIONS).recover()
     print(f"Video Control Loop Agent running at http://127.0.0.1:{port}")
     try:
         server.serve_forever()

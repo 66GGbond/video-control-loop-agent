@@ -115,7 +115,7 @@ H3 V2 为异步任务；本项目会提交任务、轮询状态、下载生成�
 
 ## 当前模型
 
-Doubao Seed 2.1 Pro（`doubao-seed-2-1-pro-260915`）负责需求理解、规划、视觉质检与修复决策；Seedance 2.5、Seedance 2.0 和 MiniMax H3 负责视频生成。当前尚未接入图片生成模型。 [模型职责、原有策略与后续路由扩展](docs/model-routing.md)。
+Doubao Seed 2.1 Pro（`doubao-seed-2-1-pro-260915`）负责需求理解、规划、视觉质检与修复决策；Seedance 2.5、Seedance 2.0 和 MiniMax H3 负责视频生成。画布生图已接入 Seedream 5.0 Pro 与 Flash，先推荐、再由用户确认生成。 [模型职责、原有策略与后续路由扩展](docs/model-routing.md)。
 
 ## 视频模型推荐
 

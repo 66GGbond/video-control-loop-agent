@@ -114,7 +114,7 @@ Run `python3 run_demo.py` and open http://127.0.0.1:8000. Configured models are 
 
 ## Current models
 
-Doubao Seed 2.1 Pro (`doubao-seed-2-1-pro-260915`) handles understanding, planning, vision evaluation and repair decisions; Seedance 2.5, Seedance 2.0 and MiniMax H3 generate video. Image generation is not connected. [模型职责、原有策略与后续路由扩展](docs/model-routing.md)。
+Doubao Seed 2.1 Pro (`doubao-seed-2-1-pro-260915`) handles understanding, planning, vision evaluation and repair decisions; Seedance 2.5, Seedance 2.0 and MiniMax H3 generate video. Canvas image tasks use Seedream 5.0 Pro or Flash after a recommendation and explicit user confirmation. [Model routing](docs/model-routing.md).
 
 ## Video model recommendation
 

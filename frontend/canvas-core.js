@@ -2,13 +2,14 @@
 (function(root) {
   const width=292, height=254;
   const clone=doc=>({...doc,viewport:{...doc.viewport},nodes:doc.nodes.map(n=>({...n})),edges:doc.edges.map(e=>({...e}))});
-  function ancestors(doc,target) {
+  function ancestors(doc,target,stopAtResults=false) {
     const seen=new Set(), visiting=new Set(), ordered=[];
     function walk(id) {
       if(visiting.has(id)) throw new Error('Connections cannot form a cycle.');
       if(seen.has(id))return;
       visiting.add(id);
-      doc.edges.filter(e=>e.target===id).forEach(e=>walk(e.source));
+      const current=doc.nodes.find(n=>n.id===id);
+      if(!(stopAtResults&&current?.kind==='image'&&current.image_run_id))doc.edges.filter(e=>e.target===id).forEach(e=>walk(e.source));
       visiting.delete(id);seen.add(id);
       const node=doc.nodes.find(n=>n.id===id);if(node)ordered.push(node);
     }
@@ -19,7 +20,8 @@
       !doc.edges.some(e=>e.source===source&&e.target===target) && !ancestors(doc,source).some(n=>n.id===target);
   }
   function bundle(doc,target) {
-    const nodes=ancestors(doc,target), names=new Map(),assets=[];
+    const nodes=ancestors(doc,target,true), names=new Map(),assets=[];
+    if(nodes.some(n=>n.kind==='image_task'))throw new Error('Generate the upstream image first, then connect its result.');
     if(nodes.some(n=>n.kind==='output')) throw new Error('Generated videos can be previewed here. Add a public video URL to use one as a reference.');
     for(const node of nodes.filter(n=>n.asset)) {
       const key=node.asset.name.toLowerCase(), prior=names.get(key);
@@ -36,7 +38,7 @@
   function fit(nodes,w,h){
     if(!nodes.length)return {x:Math.max(80,w/2-146),y:Math.max(90,h/2-127),zoom:1};
     const x=Math.min(...nodes.map(n=>n.x)), y=Math.min(...nodes.map(n=>n.y));
-    const right=Math.max(...nodes.map(n=>n.x+width)),bottom=Math.max(...nodes.map(n=>n.y+height));
+    const right=Math.max(...nodes.map(n=>n.x+width)),bottom=Math.max(...nodes.map(n=>n.y+(n.kind==='image_task'?560:height)));
     const zoom=Math.max(.2,Math.min(1.15,(w-160)/(right-x),(h-190)/(bottom-y)));
     return {x:(w-(right-x)*zoom)/2-x*zoom,y:(h-(bottom-y)*zoom)/2-y*zoom,zoom};
   }
