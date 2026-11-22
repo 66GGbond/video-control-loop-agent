@@ -60,7 +60,8 @@ def load_local_env(path: Path) -> None:
             os.environ.setdefault(key, value.strip())
 
 
-load_local_env(ROOT / ".env")
+if os.getenv("VIDEO_AGENT_SKIP_LOCAL_ENV") != "1":
+    load_local_env(ROOT / ".env")
 TRIAL = TrialStore(RUNTIME)
 VISITOR_LOCKS = [threading.RLock() for _ in range(128)]
 ORCHESTRATOR = create_orchestrator()

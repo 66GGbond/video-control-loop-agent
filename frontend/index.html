@@ -1,10 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Video Control Loop Agent</title>
-    <link rel="stylesheet" href="styles.css?v=multimodal-v26" />
+    <link rel="stylesheet" href="styles.css?v=locale-v1" />
   </head>
   <body>
     <main>
@@ -15,6 +15,10 @@
           <p class="subtitle">A quality control system for AI video generation — diagnose, plan, repair, verify.</p>
         </div>
         <div class="hero-actions">
+          <div class="language-switch" role="group" aria-label="Language">
+            <button type="button" data-language="zh" data-i18n-ignore aria-pressed="true" lang="zh-CN">中文</button>
+            <button type="button" data-language="en" data-i18n-ignore aria-pressed="false" lang="en">English</button>
+          </div>
           <button class="secondary" id="reset">Reset demo</button>
         </div>
       </header>
@@ -41,7 +45,7 @@
 
       <section id="plan-section" hidden>
         <section class="goal-card">
-          <div class="goal-main"><span class="label">Agent objective</span><strong id="goal"></strong></div>
+          <div class="goal-main"><span class="label">Agent objective</span><strong id="goal" translate="no"></strong></div>
           <div><span class="label">Recommended budget</span><strong id="budget"></strong></div>
           <div><span class="label">Active version</span><strong id="version"></strong></div>
         </section>
@@ -54,8 +58,8 @@
               <div id="reference-visual" class="reference-visual" hidden><img id="reference-preview" alt="Uploaded reference image" /></div>
               <div><span id="reference-role-label" class="reference-role">Prompt-derived constraints</span><strong id="reference-title">No reference image</strong><p id="reference-detail">The Agent will preserve the constraints extracted from your brief.</p></div>
             </div>
-            <ol id="shots" class="shot-list"></ol>
-            <div class="plan-subsection"><span class="label">Immutable constraints</span><div id="constraint-list" class="tag-list"></div></div>
+            <ol id="shots" translate="no" class="shot-list"></ol>
+            <div class="plan-subsection"><span class="label">Immutable constraints</span><div id="constraint-list" translate="no" class="tag-list"></div></div>
             <div class="plan-subsection production-direction"><span class="label">Agent directorial treatment</span><div id="production-direction" class="direction-list"></div></div>
             <div class="plan-subsection"><span class="label">Acceptance criteria</span><div id="acceptance-criteria" class="criteria-list"></div></div>
             <div class="plan-subsection"><span class="label">Controllability risks</span><div id="risk-list" class="risk-list"></div></div>
@@ -92,7 +96,7 @@
             <div class="panel-heading"><div><p class="section-kicker">04 · QUALITY CONTROL</p><h2>Release gate</h2></div><span class="pill">Policy controlled</span></div>
             <div id="gate-empty" class="empty">Run the quality loop to evaluate this version.</div>
             <div id="scores" class="scores"></div>
-            <p id="summary" class="summary"></p>
+            <p id="summary" translate="no" class="summary"></p>
           </article>
           <article class="panel agent-panel">
             <div class="panel-heading"><div><p class="section-kicker">05 · REPAIR PLANNING</p><h2>Agent decision</h2></div><span class="pill purple">Reason → Act</span></div>
@@ -117,8 +121,8 @@
       <div class="creative-agent-header"><div><p class="section-kicker">01 · CREATIVE AGENT</p><h2>Creative Agent</h2></div><div class="creative-agent-actions"><span id="creative-agent-state" class="pill purple">Ready</span><button id="creative-agent-minimize" class="icon-button" type="button" aria-label="Minimize Creative Agent">−</button></div></div>
       <div id="creative-agent-feed" class="creative-agent-feed">
         <article class="agent-message agent-message-system"><span class="agent-message-label">Creative Agent</span><p id="agent-intro">Tell me the story, key action, visual style, and any constraint that cannot change. I will ask only for context that materially affects the plan.</p></article>
-        <article id="agent-user-brief" class="agent-message agent-message-user" hidden><span class="agent-message-label">Your brief</span><p id="agent-user-brief-text"></p><small id="agent-reference-note" hidden></small></article>
-        <article id="agent-context-result" class="agent-message agent-message-system" hidden><span class="agent-message-label">Context complete</span><p id="context-summary-text"></p><div id="context-tool-list" class="tag-list"></div></article>
+        <article id="agent-user-brief" class="agent-message agent-message-user" hidden><span class="agent-message-label">Your brief</span><p id="agent-user-brief-text" translate="no"></p><small id="agent-reference-note" hidden></small></article>
+        <article id="agent-context-result" class="agent-message agent-message-system" hidden><span class="agent-message-label">Context complete</span><p id="context-summary-text" translate="no"></p><div id="context-tool-list" class="tag-list"></div></article>
         <article id="context-confirmation" class="agent-message agent-message-system agent-question" hidden><span class="agent-message-label">Context needed</span><p id="context-question-detail">This detail changes a high-impact generation constraint.</p><label for="target-market">Target market or region</label><div class="context-answer-row"><input id="target-market" type="text" autocomplete="off" placeholder="e.g. Singapore, China, Australia" /><button id="confirm-context" class="primary" type="button">Continue</button></div></article>
         <section id="agent-video-action" class="agent-action-card" hidden>
           <div class="agent-action-heading"><span class="agent-message-label">Version action</span><span id="agent-video-status" class="pill">Awaiting video</span></div>
@@ -174,7 +178,9 @@
         <div class="trial-dialog-actions"><button class="secondary" value="cancel">取消</button><button id="quota-confirm-button" class="primary" value="confirm">开始生成</button></div>
       </form>
     </dialog>
-    <script src="trial.js?v=trial-v1"></script>
-    <script src="app.js?v=trial-v1"></script>
+    <script src="i18n-catalog.js?v=locale-v1"></script>
+    <script src="i18n.js?v=locale-v1"></script>
+    <script src="trial.js?v=locale-v1"></script>
+    <script src="app.js?v=locale-v1"></script>
   </body>
 </html>

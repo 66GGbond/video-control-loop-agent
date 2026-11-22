@@ -916,7 +916,7 @@ function drawTrend(canvas, reports, releaseFloor = 3) {
   ctx.setLineDash([]);
   ctx.fillStyle = "#a984ff";
   ctx.font = "600 10px Inter, system-ui, sans-serif";
-  ctx.fillText(`${releaseFloor.toFixed(1)} gate`, pad.left + 4, gateY - 5);
+  ctx.fillText(I18n.text(`${releaseFloor.toFixed(1)} gate`), pad.left + 4, gateY - 5);
   const x = index => points.length === 1
     ? w / 2
     : pad.left + (index / (points.length - 1)) * (w - pad.left - pad.right);
@@ -1451,7 +1451,7 @@ document.querySelector("#reference-media").addEventListener("change", event => {
   event.target.value = "";
   renderReferenceAttachments();
   updateMentionMenu();
-  if (rejected.length) alert(rejected.join("\n"));
+  if (rejected.length) I18n.alert(rejected.join("\n"));
 });
 document.querySelector("#creative-prompt").addEventListener("input", () => {
   // Typing after an over-limit warning replaces the temporary visual marker.
@@ -1516,7 +1516,7 @@ document.querySelector("#project-form").addEventListener("submit", async event =
     setEditorText("");
     clearReferenceAttachments();
   } catch (error) {
-    alert(error.message);
+    I18n.alert(error.message);
   } finally {
     submit.disabled = false;
     submit.textContent = renderedState?.status === "ready_for_brief" ? "Generate control plan" : "Send update";
@@ -1534,7 +1534,7 @@ document.querySelector("#confirm-context").addEventListener("click", async () =>
   try {
     render(await endpoint("/api/confirm-context", { method: "POST", body: JSON.stringify({ target_market: market }) }));
   } catch (error) {
-    alert(error.message);
+    I18n.alert(error.message);
   } finally {
     button.disabled = false;
     button.textContent = "Continue planning";
@@ -1563,7 +1563,7 @@ async function changeRepairBudget(delta) {
   try {
     render(await endpoint("/api/update-budget", { method: "POST", body: JSON.stringify({ max_iterations: next }) }));
   } catch (error) {
-    alert(error.message);
+    I18n.alert(error.message);
     render(await endpoint("/api/state"));
   }
 }
@@ -1589,7 +1589,7 @@ async function runQualityLoop() {
   } catch (error) {
     finishQualityProgress(false);
     document.querySelector("#run-loop").disabled = false;
-    alert(error.message);
+    I18n.alert(error.message);
   }
 }
 async function prepareGeneratedEvidence(state) {
@@ -1609,7 +1609,7 @@ async function prepareGeneratedEvidence(state) {
       await advanceAutopilot(renderedState);
     }
   } catch (error) {
-    alert(error.message);
+    I18n.alert(error.message);
   } finally {
     generatedEvidencePending = false;
   }
@@ -1625,7 +1625,7 @@ async function pollGeneration() {
       await prepareGeneratedEvidence(state);
     }
   } catch (error) {
-    alert(error.message);
+    I18n.alert(error.message);
   }
 }
 async function generateVideo(event) {
@@ -1638,7 +1638,7 @@ async function generateVideo(event) {
     pollGeneration();
   } catch (error) {
     button.disabled = false;
-    alert(error.message);
+    I18n.alert(error.message);
   }
 }
 function autopilotIsRunning(state) {
@@ -1672,7 +1672,7 @@ document.querySelector("#autopilot-toggle").addEventListener("click", async even
     render(state);
     await advanceAutopilot(state);
   } catch (error) {
-    alert(error.message);
+    I18n.alert(error.message);
     button.disabled = false;
   }
 });
@@ -1695,7 +1695,7 @@ document.querySelector("#generate-repair").addEventListener("click", event => {
       .then(state => render(state))
       .catch(error => {
         event.currentTarget.disabled = false;
-        alert(error.message);
+        I18n.alert(error.message);
       });
     return;
   }
@@ -1712,7 +1712,7 @@ document.querySelector("#reset").addEventListener("click", async () => {
     document.querySelector("#creative-agent").classList.remove("collapsed");
     document.querySelector("#creative-agent-toggle").hidden = true;
     render(await endpoint("/api/reset", { method: "POST" }));
-  } catch (error) { alert(error.message); }
+  } catch (error) { I18n.alert(error.message); }
 });
 
 // Keep the public overview and trial controls reachable on narrow screens.
@@ -1725,3 +1725,10 @@ function collapseCompactAgent() {
 compactLayout.addEventListener("change", collapseCompactAgent);
 collapseCompactAgent();
 refresh();
+
+window.addEventListener("languagechange", () => {
+  const report = renderedState && selectedReview(renderedState)?.report;
+  if (!report) return;
+  const reports = renderedState.version_reviews.map(item => item.report).filter(Boolean);
+  drawTrend(document.querySelector("#trend-canvas"), reports, Number(report.rubric_profile?.overall_floor || 3));
+});

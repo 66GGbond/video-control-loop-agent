@@ -114,5 +114,5 @@ document.querySelector("#trial-open").addEventListener("click", askTrialCode);
 document.querySelector("#trial-cancel").addEventListener("click", () => document.querySelector("#trial-dialog").close());
 document.querySelector("#demo-open").addEventListener("click", async () => {
   try { render(await trialRequest("/api/demo", {method: "POST"})); }
-  catch (error) { alert(error.message); }
+  catch (error) { I18n.alert(error.message); }
 });

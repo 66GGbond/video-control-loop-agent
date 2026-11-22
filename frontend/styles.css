@@ -142,3 +142,16 @@ h2 { font-size: 16px; margin: 0; letter-spacing: -.01em; }
 .log-detail {overflow-wrap:anywhere;}
 
 .creative-agent.collapsed {visibility:hidden;}
+
+.language-switch {display:inline-flex; align-items:center; gap:3px; padding:4px; border:1px solid var(--line); border-radius:11px; background:var(--panel);}
+.language-switch button {min-height:34px; padding:6px 12px; border:1px solid transparent; border-radius:7px; color:var(--muted); background:transparent; font:inherit; font-size:13px; cursor:pointer;}
+.language-switch button[aria-pressed="true"] {color:var(--text); background:rgba(157,116,255,.2); border-color:rgba(157,116,255,.5);}
+.language-switch button:focus-visible {outline:2px solid var(--purple); outline-offset:2px;}
+html[lang="zh-CN"] {font-family:Inter,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;}
+.hero-actions {flex-wrap:wrap;}
+
+@media(min-width:761px) {
+  .hero > div:first-child {min-width:0; flex:1;}
+  .hero h1 {font-size:clamp(32px,3.1vw,44px);}
+  .hero-actions {flex:0 0 150px; justify-content:flex-end;}
+}
