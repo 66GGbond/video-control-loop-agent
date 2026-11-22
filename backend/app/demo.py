@@ -232,10 +232,12 @@ def create_enriched_project_state(
     context_agent: ContextEnrichmentAgent | None = None,
     target_market: str = "",
     multimodal_assets: list[dict] | None = None,
+    ui_language: str = "zh",
 ) -> ProjectState:
     """Run the bounded pre-generation agent before compiling a control plan."""
     agent = context_agent or ContextEnrichmentAgent()
     context = agent.enrich(prompt, reference_asset, target_market, multimodal_assets)
+    context["ui_language"] = "en" if ui_language == "en" else "zh"
     if context["status"] == "needs_user_confirmation":
         spec = CreativeSpec(
             goal=prompt,

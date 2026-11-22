@@ -92,3 +92,5 @@ body[data-workspace=canvas] {overflow:hidden;}.canvas-workspace {position:fixed;
   .project-status-heading {flex-direction:column;}
   .agent-execution-trace summary span {flex-wrap:wrap;}
 }
+
+.agent-conversation .agent-message p {margin:0;}.agent-conversation .agent-message-user {border-radius:14px 14px 4px 14px;}.agent-conversation .agent-message-system {border-radius:14px 14px 14px 4px;}

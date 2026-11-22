@@ -73,7 +73,7 @@ PROMPT_COMPILER = PromptCompiler()
 VIDEO_GENERATOR = create_video_generator()
 
 
-def start_user_directed_revision(original: ProjectState, instruction: str) -> ProjectState:
+def start_user_directed_revision(original: ProjectState, instruction: str, language: str | None = None) -> ProjectState:
     """Replan after publication without overwriting the reviewed version chain.
 
     A published video is an immutable piece of evidence, not the end of the
@@ -99,6 +99,7 @@ def start_user_directed_revision(original: ProjectState, instruction: str) -> Pr
         CONTEXT_AGENT,
         target_market,
         original.creative_spec.multimodal_assets,
+        ui_language=language or original.creative_spec.enriched_context.get("ui_language", "zh"),
     )
 
     # Keep the version chain immutable.  The fresh state only replaces the
@@ -249,6 +250,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 self.state = create_enriched_project_state(
                     prompt, reference_asset, CONTROL_PLANNER, CONTEXT_AGENT,
                     multimodal_assets=assets,
+                    ui_language=payload.get("language", "zh"),
                 )
                 record_exchange(self.state, prompt)
                 return self._json(HTTPStatus.OK, present(self.state))
@@ -267,6 +269,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     CONTEXT_AGENT,
                     target_market,
                     self.state.creative_spec.multimodal_assets,
+                    ui_language=payload.get("language", original.creative_spec.enriched_context.get("ui_language", "zh")),
                 )
                 record_exchange(self.state, target_market, original)
                 self.state.history.append({
@@ -335,6 +338,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                         CONTEXT_AGENT,
                         target_market,
                         original.creative_spec.multimodal_assets,
+                        ui_language=payload.get("language", original.creative_spec.enriched_context.get("ui_language", "zh")),
                     )
                     record_exchange(self.state, instruction, previous)
                     self.state.history = [*original.history, {
@@ -345,7 +349,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     }]
                     return self._json(HTTPStatus.OK, present(self.state))
                 if self.state.status == "published":
-                    self.state = start_user_directed_revision(self.state, instruction)
+                    self.state = start_user_directed_revision(self.state, instruction, payload.get("language"))
                     record_exchange(self.state, instruction, previous)
                     return self._json(HTTPStatus.OK, present(self.state))
                 if self.state.status == "awaiting_repair_upload" and self.state.latest_repair_task:

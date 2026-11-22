@@ -94,7 +94,7 @@ class ArkControlPlanner:
                 "note": "Only metadata is available; do not infer image pixels or visual details.",
             }
         system = """You are the planning module of an AI video controllability agent and an experienced commercial director.
-Return one valid JSON object only, with no markdown. Write all natural-language field values in the primary language of the user's brief. The user's brief is an intention, not a finished video prompt: expand it into an executable, bounded director's plan that a video model and a quality agent can both use. Choose the number of semantic beats required by the brief: 1–6 beats, named consecutively S1, S2 … Do not force three shots. A beat is a visible story or control unit, not necessarily a literal edit.
+Return one valid JSON object only, with no markdown. Write all natural-language field values in the interface language specified below. The user's brief is an intention, not a finished video prompt: expand it into an executable, bounded director's plan that a video model and a quality agent can both use. Choose the number of semantic beats required by the brief: 1–6 beats, named consecutively S1, S2 … Do not force three shots. A beat is a visible story or control unit, not necessarily a literal edit.
 
 For a sparse product, advertising, commercial, MV, or social-video brief, do real creative development instead of echoing the input. Derive a concise creative arc with a readable hook, product/subject reveal, key interaction or proof, an optional sensory/detail moment, payoff, and clean end state when they improve the brief. Choose only the beats that fit a single 4–30 second clip. A compact 12–15 second commercial may use 4–6 micro-beats when each is visibly distinct and remains readable. Do not manufacture a named brand, a slogan, a location, a real person, or an attribute that the user did not provide. If a sparse brief needs an aesthetic or casting choice, make it an adjustable execution default in production_direction, never an immutable user fact.
 
@@ -150,6 +150,8 @@ generation_spec.duration_seconds is a provisional valid integer from 4 to 30; th
             "enriched_context": enriched_context or {},
         }
         system += "\nSchema bounds: production_direction.camera_language, visual_treatment, motion_continuity and sound_design must each be a non-empty string of at most 260 characters. Use short director instructions, not paragraphs. negative_guards must contain 1–4 items."
+        language = "English" if (enriched_context or {}).get("ui_language") == "en" else "Simplified Chinese"
+        system += f"\nInterface language: {language}. All user-visible prose must use this language, even for a mixed-language brief. Preserve model names, necessary technical terms (such as gap), quoted names and phrases supplied by the user (such as mean girl). Do not mix in English narration when the interface is Chinese. Keep schema keys, IDs and enum values unchanged."
         parsed = self._request_json(system, payload, 5000)
         try:
             return self._to_spec(prompt, reference_asset, parsed, enriched_context)

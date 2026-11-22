@@ -90,7 +90,7 @@ class LocalServerTests(unittest.TestCase):
             _, first = self.request("/api/create-project", {"prompt": initial.creative_spec.source_prompt})
             status, confirmed = self.request("/api/confirm-context", {"target_market": "Singapore"})
         self.assertEqual(status, 200)
-        self.assertEqual(first["conversation"][-1]["text"], "Which region?")
+        self.assertEqual(first["conversation"][-1]["kind"], "context_question")
         self.assertEqual(confirmed["conversation"][:2], first["conversation"])
         self.assertEqual(confirmed["conversation"][2]["text"], "Singapore")
 
@@ -104,6 +104,17 @@ class LocalServerTests(unittest.TestCase):
         status, updated = self.request("/api/revise-brief", {"instruction": "Keep the label clear."})
         self.assertEqual(status, 200)
         self.assertEqual([m["text"] for m in updated["conversation"] if m["role"] == "user"], ["A tea advertisement.", "Keep the label clear."])
+
+    def test_interface_language_is_forwarded_for_creation_and_revision(self):
+        def plan(prompt, *args, **kwargs):
+            state = create_demo_state(prompt)
+            state.status = "planning_ready"
+            return state
+        with patch.object(server, "create_enriched_project_state", side_effect=plan) as planner:
+            self.request("/api/create-project", {"prompt":"mean girl scene", "language":"en"})
+            self.assertEqual(planner.call_args.kwargs["ui_language"], "en")
+            self.request("/api/revise-brief", {"instruction":"保留 gap", "language":"zh"})
+            self.assertEqual(planner.call_args.kwargs["ui_language"], "zh")
 
     def test_more_than_thirty_seconds_can_generate_without_codes(self):
         visitor = self.session()

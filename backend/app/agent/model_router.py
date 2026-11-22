@@ -41,7 +41,9 @@ def recommend(state):
                      'shot_plan':spec.shots,'repair_priority':state.latest_repair_task.prompt if state.latest_repair_task else None,
                      'reference_manifest':spec.asset_manifest,'eligible_models':eligible,
                      'excluded_models':[{'model_id':c['model_id'],'reasons':c['exclusion_reasons']} for c in cards if not c['eligible']]}
-            decision=request_json(os.environ['ARK_API_KEY'],configured_model(),SKILL.read_text(),payload,1800,timeout=90)
+            language='English' if spec.enriched_context.get('ui_language')=='en' else 'Simplified Chinese'
+            system=SKILL.read_text()+f'\nWrite user-facing reasons, tradeoffs and alternatives in {language}. Preserve model names, technical terms and quoted user phrases; keep JSON keys and model IDs unchanged.'
+            decision=request_json(os.environ['ARK_API_KEY'],configured_model(),system,payload,1800,timeout=90)
             ids={c['model_id'] for c in eligible}
             if decision.get('recommended_model') not in ids or not isinstance(decision.get('reason'),str) or not decision['reason'].strip(): raise ValueError('Invalid model recommendation')
             tradeoffs=decision.get('tradeoffs',[])

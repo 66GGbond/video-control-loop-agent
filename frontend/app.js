@@ -799,21 +799,34 @@ function renderExecutionTrace(state) {
 let renderedConversation = "";
 function renderConversation(state) {
   const log=document.querySelector("#agent-conversation"), feed=document.querySelector("#creative-agent-feed");
-  const messages=state.conversation || [], signature=JSON.stringify(messages);
+  const messages=state.conversation || [], signature=I18n.language+JSON.stringify(messages);
   if(signature===renderedConversation)return;
   const follow=feed.scrollHeight-feed.scrollTop-feed.clientHeight<48, scroll=feed.scrollTop;
   const first=renderedConversation==="";
   renderedConversation=signature;
   log.replaceChildren();
   for(const message of messages) {
-    const article=document.createElement("article"),label=document.createElement("span"),text=document.createElement("p");
+    if(state.status==="awaiting_context_confirmation"&&message===messages.at(-1)&&message.kind==="context_question")continue;
+    const article=document.createElement("article"),text=document.createElement("p");
     article.className="agent-message agent-message-"+(message.role==="user"?"user":"system");
-    label.className="agent-message-label";label.textContent=message.role==="user"?"You":"Creative Agent";
-    text.setAttribute("translate","no");text.textContent=message.text;
-    article.append(label,text);log.append(article);
+    text.setAttribute("translate","no");text.textContent=message.role==="assistant"&&message.kind?I18n.text(message.text):message.text;
+    article.append(text);log.append(article);
   }
   log.hidden=!messages.length;
   requestAnimationFrame(()=>{feed.scrollTop=follow||first?feed.scrollHeight:scroll;});
+}
+
+function renderPlanLanguage(spec) {
+  document.querySelector("#shots").innerHTML=spec.shots.map(shot=>{
+    const timing=Number.isFinite(Number(shot.start_seconds))&&Number.isFinite(Number(shot.end_seconds))
+      ? `<small class="shot-timing">${escapeHTML(shot.start_seconds)}–${escapeHTML(shot.end_seconds)}s · ${escapeHTML(I18n.text(shot.critical_moment || "planned visual beat"))}</small>`:"";
+    return `<li><strong>${escapeHTML(shot.shot_id)}</strong> — ${escapeHTML(I18n.text(shot.intent))}${timing}</li>`;
+  }).join("");
+  document.querySelector("#constraint-list").innerHTML=(spec.immutable_character_attributes||[]).map(item=>`<span class="tag">${escapeHTML(I18n.text(item))}</span>`).join("");
+  const output=spec.generation_spec||{}, duration=spec.duration_plan||{}, strategy=spec.production_strategy||{};
+  document.querySelector("#generation-spec-rationale").textContent=I18n.text(strategy.mode==="needs_segmentation"?strategy.reason||"This brief requires multiple controlled segments.":output.rationale||"The Agent will select an output specification from the brief.");
+  const beats=(duration.timeline||[]).map(shot=>`${shot.shot_id} ${shot.duration_seconds}s · ${I18n.text(shot.pacing||shot.beat_function||"planned beat")}`).join(" → ");
+  document.querySelector("#duration-plan-summary").textContent=strategy.mode==="needs_segmentation"?I18n.text("Single-clip generation is intentionally blocked. The next production step is a segment plan, not a compressed prompt."):beats?`${I18n.text("Editorial timing")} · ${beats}。${I18n.text(duration.reason||"")}`:I18n.text("Editorial timing will be derived from the approved semantic beats.");
 }
 
 function renderCreativeAgent(state, spec, enrichedContext) {
@@ -821,47 +834,10 @@ function renderCreativeAgent(state, spec, enrichedContext) {
   const prompt = spec.source_prompt || spec.goal || "";
   const hasBrief = Boolean(prompt);
   const hasPlan = Boolean(spec.shots?.length);
-  const pendingQuestion = (enrichedContext.open_questions || []).find(item => item.blocking) || (enrichedContext.open_questions || [])[0];
-  const briefMessage = document.querySelector("#agent-user-brief");
-  const contextResult = document.querySelector("#agent-context-result");
   const question = document.querySelector("#context-confirmation");
-  briefMessage.hidden = !hasBrief || Boolean(state.conversation?.length);
-  if (hasBrief) {
-    document.querySelector("#agent-user-brief-text").textContent = prompt;
-    const referenceNote = document.querySelector("#agent-reference-note");
-    const media = spec.multimodal_assets || [];
-    const imageCount = media.filter(asset => asset.media_type === "image").length;
-    const audioCount = media.filter(asset => asset.media_type === "audio").length;
-    const videoCount = media.filter(asset => asset.media_type === "video").length;
-    referenceNote.hidden = !media.length;
-    referenceNote.textContent = media.length ? `Attached · ${imageCount} image reference(s), ${audioCount} audio reference(s), ${videoCount} video reference(s)` : "";
-  }
   question.hidden = state.status !== "awaiting_context_confirmation";
-  if (!question.hidden) {
-    document.querySelector("#context-question-detail").textContent = pendingQuestion
-      ? `${pendingQuestion.question} ${pendingQuestion.why || ""}`
-      : "The Agent needs one high-impact context field before compiling the control plan.";
-  }
-  contextResult.hidden = !enrichedContext.summary || state.status === "awaiting_context_confirmation";
-  if (!contextResult.hidden) {
-    document.querySelector("#context-summary-text").textContent = enrichedContext.summary;
-    const tools = (enrichedContext.tool_observations || []).filter(item => item.status === "completed");
-    document.querySelector("#context-tool-list").innerHTML = tools.map(item => `<span class="tag">${human(item.tool)}</span>`).join("");
-  }
-  const intro = document.querySelector("#agent-intro");
-  if (state.status === "ready_for_brief") {
-    intro.textContent = "Describe your idea, or send content from the canvas.";
-  } else if (state.status === "awaiting_context_confirmation") {
-    intro.textContent = "I have understood your brief. One detail needs confirmation before I create a controllable plan.";
-  } else if (state.status === "needs_segmentation") {
-    intro.textContent = "This brief needs a multi-segment production plan. I have stopped before generation rather than compressing the story into one clip; revise the brief or split it into segments.";
-  } else if (hasPlan) {
-    intro.textContent = state.current_version_id !== "none"
-      ? `Your revision has been compiled into a new control plan. Review it, then approve the bounded budget and generate ${nextVersionLabel(state.current_version_id)}.`
-      : "The control plan is ready. Review the plan in the workspace, then approve a bounded repair budget and generate the first version.";
-  } else {
-    intro.textContent = "I am preparing the project context from the brief and available assets.";
-  }
+  document.querySelector("#context-question-detail").textContent = "Which country or region is this video for?";
+  document.querySelector("#agent-intro").parentElement.hidden = hasBrief || Boolean(state.conversation?.length);
   const isInitialBrief = state.status === "ready_for_brief";
   const composerLabel = document.querySelector("#creative-prompt-label");
   const composer = document.querySelector("#creative-prompt");
@@ -1262,13 +1238,7 @@ function render(state) {
   const recommendedIterations = Number.isInteger(spec.recommended_iterations) ? spec.recommended_iterations : spec.max_iterations;
   document.querySelector("#budget").textContent = `${recommendedIterations} recommended`;
   document.querySelector("#version").textContent = state.current_version_id === "none" ? "Not generated" : state.current_version_id.toUpperCase();
-  document.querySelector("#shots").innerHTML = spec.shots.map(shot => {
-    const timing = Number.isFinite(Number(shot.start_seconds)) && Number.isFinite(Number(shot.end_seconds))
-      ? `<small class="shot-timing">${shot.start_seconds}–${shot.end_seconds}s · ${shot.critical_moment || "planned visual beat"}</small>`
-      : "";
-    return `<li><strong>${shot.shot_id}</strong> — ${shot.intent}${timing}</li>`;
-  }).join("");
-  document.querySelector("#constraint-list").innerHTML = (spec.immutable_character_attributes || []).map(item => `<span class="tag">${item}</span>`).join("");
+  renderPlanLanguage(spec);
   const direction = spec.production_direction || {};
   const directionItems = [
     ["Camera", direction.camera_language],
@@ -1281,7 +1251,6 @@ function render(state) {
   document.querySelector("#acceptance-criteria").innerHTML = (spec.acceptance_criteria || []).map(item => `<div class="criterion"><span class="criterion-shot">${item.shot_id}</span><span>${item.requirement}</span>${item.critical ? `<b>critical</b>` : ""}</div>`).join("");
   document.querySelector("#risk-list").innerHTML = (spec.risk_forecast || []).map(item => `<span class="risk">${item}</span>`).join("");
   const outputSpec = spec.generation_spec || {};
-  const durationPlan = spec.duration_plan || {};
   const productionStrategy = spec.production_strategy || {};
   const outputTags = [];
   if (productionStrategy.mode === "needs_segmentation") outputTags.push("Multi-segment required");
@@ -1289,15 +1258,6 @@ function render(state) {
   if (outputSpec.aspect_ratio) outputTags.push(outputSpec.aspect_ratio);
   if (outputSpec.quality_target) outputTags.push(`${outputSpec.quality_target} clarity`);
   document.querySelector("#generation-spec").innerHTML = outputTags.map(item => `<span class="tag">${item}</span>`).join("");
-  document.querySelector("#generation-spec-rationale").textContent = productionStrategy.mode === "needs_segmentation"
-    ? productionStrategy.reason || "This brief requires multiple controlled segments."
-    : outputSpec.rationale || "The Agent will select an output specification from the brief.";
-  const beatSummary = (durationPlan.timeline || []).map(shot => `${shot.shot_id} ${shot.duration_seconds}s · ${shot.pacing || shot.beat_function || "planned beat"}`).join("  →  ");
-  document.querySelector("#duration-plan-summary").textContent = productionStrategy.mode === "needs_segmentation"
-    ? "Single-clip generation is intentionally blocked. The next production step is a segment plan, not a compressed prompt."
-    : beatSummary
-      ? `Editorial timing · ${beatSummary}. ${durationPlan.reason || ""}`.trim()
-      : "Editorial timing will be derived from the approved semantic beats.";
   const autopilot = state.execution_mode === "autopilot";
 
   const referenceMedia = Array.isArray(spec.multimodal_assets) ? spec.multimodal_assets : [];
@@ -1546,9 +1506,9 @@ document.querySelector("#project-form").addEventListener("submit", async event =
         asset.prompt_mentions = promptMentionsFor(file, prompt);
         return asset;
       }));
-      render(await endpoint("/api/create-project", { method: "POST", body: JSON.stringify({ prompt, multimodal_assets: multimodalAssets }) }));
+      render(await endpoint("/api/create-project", { method: "POST", body: JSON.stringify({ prompt, multimodal_assets: multimodalAssets, language:I18n.language }) }));
     } else {
-      render(await endpoint("/api/revise-brief", { method: "POST", body: JSON.stringify({ instruction: prompt }) }));
+      render(await endpoint("/api/revise-brief", { method: "POST", body: JSON.stringify({ instruction: prompt, language:I18n.language }) }));
     }
     setEditorText("");
     clearReferenceAttachments();
@@ -1570,7 +1530,7 @@ document.querySelector("#confirm-context").addEventListener("click", async () =>
   button.disabled = true;
   button.textContent = "Continuing…";
   try {
-    render(await endpoint("/api/confirm-context", { method: "POST", body: JSON.stringify({ target_market: market }) }));
+    render(await endpoint("/api/confirm-context", { method: "POST", body: JSON.stringify({ target_market: market, language:I18n.language }) }));
     if (renderedState.status === "planning_ready") await recommendCurrentVideoModel();
   } catch (error) {
     I18n.alert(error.message);
@@ -1774,6 +1734,7 @@ document.querySelector("#reset").addEventListener("click", async () => {
 refresh();
 
 window.addEventListener("languagechange", () => {
+  if(renderedState){renderConversation(renderedState);if(renderedState.creative_spec.shots?.length)renderPlanLanguage(renderedState.creative_spec);}
   const report = renderedState && selectedReview(renderedState)?.report;
   if (!report) return;
   const reports = renderedState.version_reviews.map(item => item.report).filter(Boolean);
