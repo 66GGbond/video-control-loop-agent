@@ -80,8 +80,13 @@
     $('canvas-selection-count').textContent=selectedEdge?'Connection':`${selection.size}`;
     $('canvas-duplicate').disabled=!selection.size;
     const single=selection.size===1?doc?.nodes.find(n=>selection.has(n.id)):null;
-    $('canvas-to-agent').hidden=!selection.size||['task','image_task','output','note'].includes(single?.kind);
+    $('canvas-to-agent').hidden=!selection.size||['image_task','output','note'].includes(single?.kind);
     $('canvas-selection-count').hidden=selection.size===1&&!selectedEdge;
+    const bar=$('canvas-selection');
+    const header=single?[...nodes.children].find(el=>el.dataset.node===single.id)?.querySelector('.canvas-node-header'):null;
+    const parent=header||root;
+    if(bar.parentElement!==parent)parent.append(bar);
+    bar.classList.toggle('is-inline',Boolean(header));
     $('canvas-select').setAttribute('aria-pressed',String(tool==='select'));
     $('canvas-pan').setAttribute('aria-pressed',String(tool==='pan'));
     stage.dataset.tool=space?'pan':tool;
@@ -89,6 +94,7 @@
   }
   function positionSelection() {
     const bar=$('canvas-selection');if(bar.hidden||root.hidden)return;
+    if(bar.classList.contains('is-inline')){bar.style.visibility='visible';return;}
     const region=root.getBoundingClientRect();
     let selected=[...nodes.children].filter(el=>selection.has(el.dataset.node));
     if(!selected.length&&selectedEdge){const ends=selectedEdge.split(':');selected=[...nodes.children].filter(el=>ends.includes(el.dataset.node));}
@@ -147,6 +153,7 @@
   function render() {
     if(!doc)return;
     // Rebuilding only occurs for structural edits, never per pointer movement or keystroke.
+    const actions=$('canvas-selection');if(actions.parentElement!==root)root.append(actions);
     nodeResize.disconnect();nodes.replaceChildren();
     for(const node of doc.nodes) {
       const el=document.createElement('article');el.className=`canvas-node kind-${node.kind}`;el.dataset.node=node.id;el.style.left=node.x+'px';el.style.top=node.y+'px';
@@ -175,10 +182,6 @@
       if(node.asset||node.kind==='output') {
         const info=document.createElement('div');info.className='canvas-media-label';const name=document.createElement('span');name.textContent=node.asset?.name||node.version_id.toUpperCase();name.translate=false;
         const seconds=document.createElement('small');seconds.textContent=node.asset?.duration_seconds?node.asset.duration_seconds+'s':node.kind==='output'?node.text:'';seconds.translate=false;info.append(name,seconds);body.append(info);
-      }
-      if(node.kind==='task') {
-        const footer=document.createElement('div');footer.className='canvas-task-footer';const label=document.createElement('span');label.textContent='VCL Agent';
-        const run=document.createElement('button');run.type='button';run.innerHTML='<span>Send to Agent</span>'+icon('arrow');run.addEventListener('click',()=>send(node.id));footer.append(label,run);body.append(footer);
       }
       if(node.kind==='image_task')window.CanvasImages.decorate(node,body);
       if(node.kind==='image'&&node.image_run_id){const original=document.createElement('a');original.href='/api/image-output/'+node.image_run_id;original.download='seedream-'+node.image_run_id+'.png';original.className='image-original';original.textContent='Original image';body.append(original);}
