@@ -56,6 +56,7 @@ class ImageHTTPTests(unittest.TestCase):
         with patch('backend.app.image_tasks.seedream.generate') as generate:
             choice=self.recommend();generate.assert_not_called()
             self.assertEqual(self.request('/api/generate-image',{'node_id':'draw','choice_id':choice['choice_id'],'model_id':'forged'})[0],400)
+            self.assertEqual(self.request('/api/generate-image',{'node_id':'draw','choice_id':choice['choice_id'],'model_id':[]})[0],400)
         self.assertNotIn('pro-key',str(choice));self.assertNotIn('key_env',str(choice))
 
     def test_confirmed_model_is_bound_and_duplicate_submission_is_idempotent(self):

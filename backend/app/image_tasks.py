@@ -104,7 +104,7 @@ class ImageTasks:
         if result.get('status')!='recommended':return result
         value=inputs(document,node)
         if result['fingerprint']!=signature(value):raise ValueError('Image inputs changed. Recommend a model again.')
-        if model not in {c['model_id'] for c in cards() if c['configured']}:raise ValueError('Selected image model is unavailable')
+        if not isinstance(model,str) or model not in {c['model_id'] for c in cards() if c['configured']}:raise ValueError('Selected image model is unavailable')
         result.update(status='running',selected_model=model,error='',run_id=choice_id)
         self.put(visitor,node,result)
         self._launch(visitor,node,result.copy(),value)
