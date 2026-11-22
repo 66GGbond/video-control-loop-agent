@@ -9,12 +9,12 @@ button:focus-visible,a:focus-visible { outline:2px solid #c2acff;outline-offset:
 .nav-page {display:flex;flex-direction:column;align-items:center;gap:8px;min-height:67px;padding:12px 2px;border:1px solid transparent;border-radius:12px;color:#898198;background:transparent;font:inherit;font-size:10px;cursor:pointer;white-space:nowrap;}
 .nav-page:hover {color:#ddd1ff;background:#a37aff0b;}.nav-page.active {color:#d7c3ff;background:linear-gradient(150deg,#9263ff22,#9263ff09);border-color:#9263ff3a;}.nav-page.active::before {content:'';position:absolute;left:0;height:25px;width:3px;border-radius:0 5px 5px 0;background:#a781ff;}
 .nav-bottom {margin-top:auto;}.local-signal {color:#777184;font-size:9px;display:flex;align-items:center;gap:5px;}.local-signal i {width:5px;height:5px;border-radius:50%;background:#77c6ad;box-shadow:0 0 10px #77c6ad40;}
-body main#vcl-workspace {width:auto;max-width:none;min-height:100dvh;margin:0 auto 0 var(--nav-width);padding:44px clamp(24px,4vw,72px) 100px;transition:margin-right .24s,padding .24s;}
+body main#vcl-workspace {container:vcl / inline-size;width:auto;max-width:none;min-height:100dvh;margin:0 auto 0 var(--nav-width);padding:44px clamp(24px,4vw,72px) 100px;transition:margin-right .24s,padding .24s;}
 .hero {align-items:center;}.hero-actions {flex-shrink:0;}.hero h1 {font-size:clamp(28px,3.4vw,49px);}.hero .subtitle {font-size:14px;max-width:620px;}
 
 @media(min-width:1280px) {.project-status-body {grid-template-columns:minmax(0,1.2fr) minmax(290px,.8fr);}}
 @media(min-width:1800px) {body main#vcl-workspace {padding-right:max(5vw,calc((100vw - var(--nav-width) - 1600px)/2));padding-left:max(5vw,calc((100vw - var(--nav-width) - 1600px)/2));}}
-/* A floating conversation, independent of either workspace's geometry. */
+/* Shared floating conversation; workspace-specific reflow rules follow below. */
 .creative-agent {z-index:42;top:16px;right:20px;bottom:16px;width:var(--agent-width);height:calc(100dvh - 32px);max-height:calc(100dvh - 32px);border:1px solid #c4b4e029;border-radius:18px;background:linear-gradient(150deg,#221c30d9,#15111fdf);backdrop-filter:blur(28px) saturate(115%);box-shadow:0 16px 48px #0005,inset 0 1px #ffffff09;}
 .creative-agent-header {background:transparent;border-bottom-color:#ffffff09;}
 .creative-agent .agent-message {border-color:#bda9df12;background:#bda9df06;}
@@ -65,3 +65,30 @@ body[data-workspace=canvas] {overflow:hidden;}.canvas-workspace {position:fixed;
 .canvas-node-header .canvas-selection .canvas-icon {width:26px;height:26px;border-radius:6px;padding:4px;}
 .canvas-node-header .canvas-selection .ui-icon {width:15px;height:15px;}
 .canvas-selection .canvas-send {width:30px;height:30px;padding:6px;justify-content:center;}
+
+/* VCL content reflows beside the Agent; the canvas keeps its overlay behavior. */
+@media(min-width:761px) {
+  body[data-workspace=vcl].agent-open {--agent-width:clamp(300px,32vw,432px);}
+  body[data-workspace=vcl].agent-open main#vcl-workspace {margin-right:calc(var(--agent-width) + 40px);padding-left:24px;padding-right:24px;}
+}
+@container vcl (max-width:900px) {
+  .hero {flex-wrap:wrap;align-items:flex-start;gap:16px;}
+  .hero>div:first-child {flex:1 1 100%;min-width:0;}
+  .hero h1 {font-size:clamp(28px,5cqw,42px);overflow-wrap:anywhere;}
+  .hero-actions {margin-left:auto;flex-wrap:wrap;}
+  .project-status-body {grid-template-columns:minmax(0,1fr);}
+  .top-grid,.goal-card,.context-confirmation,.context-summary,.version-navigator,.video-stage {flex-direction:column;align-items:stretch;}
+  .top-grid>* {flex:auto;}
+  .version-nav-actions,.video-stage-actions,.model-selection-actions {flex-wrap:wrap;}
+  .context-answer-row {min-width:0;width:100%;}
+  .context-summary .tag-list {justify-content:flex-start;}
+  .video-stage-operation,.video-ready-card,.quality-progress {width:100%;}
+  .project-status-facts strong {white-space:normal;overflow-wrap:anywhere;}
+  .log-row {grid-template-columns:65px minmax(0,1fr);}
+  .log-detail {grid-column:2;}
+}
+@container vcl (max-width:550px) {
+  .project-status-facts {grid-template-columns:minmax(0,1fr);}
+  .project-status-heading {flex-direction:column;}
+  .agent-execution-trace summary span {flex-wrap:wrap;}
+}
