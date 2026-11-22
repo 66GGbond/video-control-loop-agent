@@ -172,6 +172,8 @@ def create_project_state(
     """Use the live planning tool when available, with a deterministic fallback."""
     def finish(state: ProjectState) -> ProjectState:
         context = enriched_context or {}
+        if state.creative_spec.enriched_context.get('creative_questions'):
+            context={**context,'creative_questions':state.creative_spec.enriched_context['creative_questions']}
         state.creative_spec.enriched_context = context
         state.creative_spec.multimodal_assets = multimodal_assets or ([reference_asset] if reference_asset else [])
         state.creative_spec.asset_manifest = context.get("asset_manifest") or build_asset_manifest(state.creative_spec.multimodal_assets)

@@ -29,7 +29,13 @@ def validate_plan(value, assets):
         if person['name'].strip().casefold() in {p['name'].casefold() for p in result}:
             raise ValueError('人物参考规划包含重复人物。')
         result.append({'id': 'C' + str(len(result) + 1), 'name': person['name'].strip(), 'appearance': person['appearance'].strip(), 'reference_names': list(dict.fromkeys(refs))})
-    return {'required': value['required'], 'characters': result}
+    questions = value.get('questions', [])
+    if not isinstance(questions,list) or len(questions)>3 or any(not isinstance(q,str) or not q.strip() or len(q)>500 for q in questions):
+        raise ValueError('创意确认问题格式无效。')
+    style = value.get('shared_style', {})
+    if not isinstance(style,dict):
+        raise ValueError('统一风格格式无效。')
+    return {'required': value['required'], 'characters': result, 'shared_style': style, 'questions': list(dict.fromkeys(q.strip() for q in questions))}
 
 
 def source_assets(spec):
@@ -45,27 +51,57 @@ def assess(state):
     if state.status not in EDITABLE or not spec.shots:
         raise ValueError('请先生成脚本，再规划人物参考。')
     if spec.character_reference_plan:
-        return spec.character_reference_plan
+        old=spec.character_reference_plan
+        if old.get('schema_version')==2 or old.get('status') not in {'planned'}:
+            return old
+        spec.character_reference_plan={}
     if not os.getenv('ARK_API_KEY'):
         raise ValueError('人物参考规划需要配置决策模型。')
     language = 'English' if spec.enriched_context.get('ui_language') == 'en' else 'Simplified Chinese'
     decision = request_json(os.environ['ARK_API_KEY'], configured_model(), SKILL.read_text() + '\nInterface language: ' + language,
                             {'brief': spec.source_prompt, 'storyboard': spec.shots, 'visual_treatment': spec.production_direction,
+                             'creative_answers': spec.enriched_context.get('creative_answers',[]),
+                             'planner_questions':spec.enriched_context.get('creative_questions',[]),
                              'uploaded_images': [{'name': a['name'], 'role': a.get('role')} for a in source_assets(spec) if a.get('media_type') == 'image']}, 3000, timeout=90)
     plan = validate_plan(decision, source_assets(spec))
-    plan.update(id=uuid.uuid4().hex, status='planned' if plan['required'] else 'skipped')
+    plan['questions']=list(dict.fromkeys([*plan['questions'],*spec.enriched_context.get('creative_questions',[])]))[:3]
+    style=plan['shared_style']
+    evidence=style.get('evidence','')
+    confidence=style.get('confidence',0)
+    user_text=spec.source_prompt+'\n'+'\n'.join(spec.enriched_context.get('creative_answers',[]))
+    style_clear=(style.get('explicit') is True and isinstance(style.get('description'),str) and 0<len(style['description'].strip())<=1500
+                 and isinstance(evidence,str) and bool(evidence.strip()) and evidence.strip() in user_text
+                 and isinstance(confidence,(int,float)) and not isinstance(confidence,bool) and .85<=confidence<=1)
+    if plan['required'] and not style_clear:
+        question=('What visual style should this whole video share: photorealistic live action, refined 3D, 2D animation, or another style?'
+                  if language=='English' else '这支视频的所有人物统一采用哪种画面风格？例如超写实仿真人、精致 3D、二维动画，或你喜欢的其他风格。')
+        plan['questions']=list(dict.fromkeys([question,*plan['questions']]))[:3]
+    plan.update(id=uuid.uuid4().hex, schema_version=2, view_count=3,
+                status='awaiting_clarification' if plan['questions'] else 'planned' if plan['required'] else 'skipped')
+    if plan['questions']:
+        state.autopilot_paused=True
+        ask(state,plan['questions'])
+    elif plan['required']:
+        spec.production_direction['character_visual_style']=style['description'].strip()
+        spec.generation_spec['quality_target']='high'
+        spec.generation_contract={};spec.evaluation_contract={}
+        spec.video_model_selection['confirmed']=False
     spec.character_reference_plan = plan
     return plan
 
 
 def document(spec, person, node):
-    prompt = ('Create a professional character turnaround sheet for ONE important video character. '
-              'Exactly four equal full-body views, left to right: front, back, left profile, right profile. '
-              'Same single identity, proportions, face, hairstyle and outfit across all four views. Neutral uncluttered background, even studio light, readable face and clothing. '
-              'No extra characters, no plot scene, no text, no labels. Use supplied character images as identity reference when present.\n'
-              'Character: ' + person['name'] + '\nAppearance / adjustable casting default: ' + person['appearance'] +
-              '\nVideo visual treatment: ' + str(spec.production_direction.get('visual_treatment', '')))
-    nodes = [{'id': node, 'kind': 'image_task', 'text': prompt}]
+    style=spec.character_reference_plan.get('shared_style',{}).get('description','')
+    prompt = ('Create a premium character design turnaround sheet for ONE important character in ONE shared video world. '
+              'Exactly THREE equal full-body views, left to right: front, side profile, back. '
+              'The same identity, proportions, face, hairstyle, wardrobe and materials in every view. '
+              'Seamless PURE WHITE background (#FFFFFF), refined even studio lighting, no environment or props beyond required wardrobe. '
+              'NO TEXT, letters, numbers, captions, view labels, logos, signatures or extra figures. '
+              'Sophisticated design, intentional silhouette, exquisite grooming, refined wardrobe detailing, premium materials and polished presentation. '
+              'Use supplied character images as identity references when present. Individual appearance below describes physical design only.\n'
+              'Character: '+person['name']+'\nAppearance: '+person['appearance']+
+              '\nMANDATORY SHARED PROJECT STYLE (identical across ALL characters; overrides conflicting inferred rendering styles): '+style)
+    nodes = [{'id': node, 'kind': 'image_task', 'text': prompt, 'watermark':False}]
     edges = []
     for i, asset in enumerate(source_assets(spec)):
         if asset['name'] in person['reference_names']:
@@ -77,12 +113,12 @@ def document(spec, person, node):
 
 def prepare(state, store, visitor):
     plan = assess(state)
-    if not plan['required'] or plan.get('model_choice'):
+    if plan.get('status')=='awaiting_clarification' or not plan['required'] or plan.get('model_choice'):
         return plan
     # One shared recommendation; each paid job still binds its own exact input.
     node = 'character_choice_' + plan['id']
     doc = document(state.creative_spec, plan['characters'][0], node)
-    doc['nodes'][0]['text'] = ('Select an image model for consistent character turnaround sheets, exactly four full-body views per important character.\nCreative brief: ' + state.creative_spec.source_prompt[:3500] + '\nImportant characters: ' + json.dumps([{'name':p['name'], 'appearance':p['appearance'][:600]} for p in plan['characters']], ensure_ascii=False))
+    doc['nodes'][0]['text'] = ('Select an image model for consistent character turnaround sheets, exactly three full-body views per important character.\nCreative brief: ' + state.creative_spec.source_prompt[:3500] + '\nShared style: '+str(plan.get('shared_style',{}).get('description','')) + '\nImportant characters: ' + json.dumps([{'name':p['name'], 'appearance':p['appearance'][:600]} for p in plan['characters']], ensure_ascii=False))
     plan['model_choice'] = ImageTasks(store).recommend(visitor, node, doc)
     return plan
 
@@ -96,19 +132,23 @@ def start(state, store, visitor, plan_id, model):
     plan = state.creative_spec.character_reference_plan
     if not plan or plan.get('id') != plan_id or state.status not in EDITABLE:
         raise ValueError('人物参考规划已变化，请刷新。')
+    if plan.get('status')=='awaiting_clarification':
+        raise ValueError('请先在创作 Agent 对话中确认风格或其他关键问题。')
     if not plan['required']:
         return plan
     if plan.get('status') != 'planned':
         return sync(state, store, visitor)
+    if plan.get('schema_version')!=2 or plan.get('view_count')!=3:
+        raise ValueError('请重新规划人物三视图并确认统一风格。')
     if model not in {c['model_id'] for c in cards() if c['configured']}:
         raise ValueError('所选生图模型不可用。')
     if not plan.get('model_choice'):
         raise ValueError('请先获取生图模型推荐。')
     assets = source_assets(state.creative_spec)
     if any(a.get('role') in {'first_frame', 'last_frame'} for a in assets):
-        raise ValueError('首尾帧模式不能混用人物四视图参考。请先改用普通参考图模式。')
+        raise ValueError('首尾帧模式不能混用人物三视图参考。请先改用普通参考图模式。')
     if len([a for a in assets if a.get('media_type') == 'image']) + len(plan['characters']) > 30:
-        raise ValueError('人物四视图与现有图片合计不能超过 30 张。')
+        raise ValueError('人物三视图与现有图片合计不能超过 30 张。')
     service = ImageTasks(store)
     jobs = []
     for person in plan['characters']:
@@ -151,7 +191,7 @@ def attach(state, store, visitor, payload, normalise):
     if plan.get('attached'):
         return plan
     if state.status not in EDITABLE or plan.get('status') != 'generated':
-        raise ValueError('请等待人物四视图生成完成。')
+        raise ValueError('请等待人物三视图生成完成。')
     previews = payload.get('previews')
     people = plan['characters']
     if not isinstance(previews, list) or len(previews) != len(people):
@@ -180,7 +220,35 @@ def attach(state, store, visitor, payload, normalise):
 
 def ensure_ready(state):
     plan = state.creative_spec.character_reference_plan
+    if plan.get('status')=='awaiting_clarification':
+        raise ValueError('请先在创作 Agent 对话中确认关键创意问题。')
     if not plan:
-        raise ValueError('请先让 Agent 判断是否需要人物四视图。')
+        raise ValueError('请先让 Agent 判断是否需要人物三视图。')
     if plan.get('required') and (plan.get('status') != 'ready' or not plan.get('attached')):
-        raise ValueError('请先完成人物四视图，再生成视频。')
+        raise ValueError('请先完成人物三视图，再生成视频。')
+
+
+def ask(state, questions):
+    from datetime import datetime, timezone
+    for question in questions:
+        state.conversation.append({'id':uuid.uuid4().hex,'at':datetime.now(timezone.utc).isoformat(),'role':'assistant','kind':'creative_clarification','text':question})
+
+
+def answer(state, text, store, visitor):
+    from datetime import datetime, timezone
+    plan=state.creative_spec.character_reference_plan
+    if plan.get('status')!='awaiting_clarification':
+        raise ValueError('没有待确认的创意问题。')
+    state.conversation.append({'id':uuid.uuid4().hex,'at':datetime.now(timezone.utc).isoformat(),'role':'user','text':text})
+    state.creative_spec.enriched_context.setdefault('creative_answers',[]).append(text)
+    state.creative_spec.character_reference_plan={}
+    try:
+        result=prepare(state,store,visitor)
+    except Exception:
+        state.creative_spec.character_reference_plan=plan
+        raise
+    if result.get('status')!='awaiting_clarification':
+        message=('The shared style is confirmed. All characters will use it for their three-view references.'
+                 if state.creative_spec.enriched_context.get('ui_language')=='en' else '统一风格已确认，所有人物三视图都会按这套风格制作。')
+        ask(state,[message])
+    return result

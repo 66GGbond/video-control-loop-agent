@@ -15,7 +15,7 @@ SOURCE='https://docs.volcengine.com/docs/ark/seedream-5-0-pro?lang=zh'
 
 def cards():
     return [{'model_id':model,'name':name,'positioning':position,'configured':bool(os.getenv(seedream.KEYS[model])),
-             'max_images':10,'output':'One 2K PNG, watermark enabled','price':None,'measured_latency':None,'source':SOURCE}
+             'max_images':10,'output':'One 2K PNG; watermark follows task settings','price':None,'measured_latency':None,'source':SOURCE}
             for model,name,position in [(seedream.PRO,'Seedream 5.0 Pro','Official positioning: quality, detail and complex creation'),
                                         (seedream.FLASH,'Seedream 5.0 Flash','Official positioning: faster generation and lower cost; latency/cost sensitive use')]]
 
@@ -45,7 +45,7 @@ def inputs(document,node_id):
     prompt='\n\n'.join(n['text'].strip() for n in ordered if n['kind'] in {'text','image_task'} and n['text'].strip())
     if not prompt or len(prompt)>12000: raise ValueError('Write an image prompt of up to 12000 characters')
     if len(images)>10:raise ValueError('Use at most 10 image references')
-    return {'prompt':prompt,'images':images,'size':'2K','watermark':True}
+    return {'prompt':prompt,'images':images,'size':'2K','watermark':nodes[node_id].get('watermark',True)}
 
 
 def signature(value):
@@ -87,7 +87,7 @@ class ImageTasks:
             if not os.getenv('ARK_API_KEY'):raise ValueError('Decision model unavailable')
             decision=request_json(os.environ['ARK_API_KEY'],configured_model(),SKILL.read_text(),
                 {'brief':value['prompt'],'reference_images':[{'name':a['name'],'order':i+1} for i,a in enumerate(value['images'])],
-                 'eligible_models':eligible,'output':{'size':'2K','count':1,'watermark':True}},1400,timeout=90)
+                 'eligible_models':eligible,'output':{'size':'2K','count':1,'watermark':value['watermark']}},1400,timeout=90)
             ids={c['model_id'] for c in eligible}
             if decision.get('recommended_model') not in ids or not isinstance(decision.get('reason'),str) or not decision['reason'].strip(): raise ValueError('Invalid recommendation')
             tradeoffs=decision.get('tradeoffs',[]);alternatives=decision.get('alternatives',[])
@@ -118,7 +118,7 @@ class ImageTasks:
     def _work(self,visitor,node,result,value):
         try:
             binding='\nReference binding map: '+json.dumps([{'image':i+1,'mention':'@'+a['name']} for i,a in enumerate(value['images'])],ensure_ascii=False) if value['images'] else ''
-            image=seedream.generate(result['selected_model'],value['prompt']+binding,[a['url'] for a in value['images']])
+            image=seedream.generate(result['selected_model'],value['prompt']+binding,[a['url'] for a in value['images']],**({'watermark':False} if value.get('watermark') is False else {}))
             with self.store.connect() as db:
                 db.execute('INSERT INTO image_outputs VALUES (?,?,?,?)',(visitor,result['run_id'],'image/png',image))
             result.update(status='succeeded',output_url='/api/image-output/'+result['run_id'])

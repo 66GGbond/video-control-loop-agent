@@ -12,11 +12,11 @@ KEYS = {PRO:'SEEDREAM_PRO_API_KEY',FLASH:'SEEDREAM_FLASH_API_KEY'}
 ENDPOINT = 'https://ark.cn-beijing.volces.com/api/v3/images/generations'
 
 
-def generate(model, prompt, images):
+def generate(model, prompt, images, *, watermark=True):
     key=os.getenv(KEYS.get(model,''))
     if not key: raise ValueError('Image model is not configured')
     if not prompt.strip() or len(images)>10: raise ValueError('Invalid image generation inputs')
-    body={'model':model,'prompt':prompt,'size':'2K','response_format':'b64_json','output_format':'png','stream':False,'watermark':True}
+    body={'model':model,'prompt':prompt,'size':'2K','response_format':'b64_json','output_format':'png','stream':False,'watermark':watermark}
     if images: body['image']=images
     request=urllib.request.Request(ENDPOINT,data=json.dumps(body).encode(),headers={'Authorization':f'Bearer {key}','Content-Type':'application/json'},method='POST')
     try:

@@ -100,8 +100,11 @@ For a sparse product, advertising, commercial, MV, or social-video brief, do rea
 
 Each shot.intent must be a concrete director instruction, not a generic label. In one or two concise sentences, state the visible subject/product state, setting or visual context, action, framing/camera movement, and the one detail that must read on screen. `critical_moment` must name the exact visual evidence the evaluator should verify. Use only user facts and tool facts from enriched_context as hard constraints. Never promote a model inference or unknown field to a fact. A reference asset is only a lock signal with metadata unless enriched_context contains an explicit tool observation. The asset_manifest records ordered user materials and @ associations: do not invent visual or audio facts from it. Every listed asset may condition generation, but create a reference-specific acceptance criterion only when the brief explicitly binds the asset. Write its exact @ token (for example @hero.png) in that criterion so later visual QA knows which reference is relevant. An unbound uploaded asset is conditioning-only, never proof of a quality requirement. For any visible physical action, interaction, reveal, or transformation, create at least one atomic criterion that explicitly names the action/contact/result and can be falsified at its critical moment. Generic claims such as “the action looks good” are invalid; this requirement is the evidence anchor for motion and physics. Recommend the smallest repair budget that can credibly manage the stated risks.
 
+When a consequential creative choice is ambiguous and your inference is low confidence, ask the user instead of silently treating it as settled. Return clarification_questions (0–3 concise questions) for unresolved choices that change the creative result. Do not ask for minor execution details or facts the user already provided. A story genre or platform does not establish live-action versus 3D/2D rendering. Keep unknown rendering medium unresolved in production_direction; never present a guessed medium as a user fact.
+
 Required JSON schema:
 {
+  "clarification_questions": [],
   "objective": "one sentence describing the intended final video",
   "immutable_constraints": ["3 to 6 short constraints"],
   "shots": [
@@ -174,6 +177,9 @@ generation_spec.duration_seconds is a provisional valid integer from 4 to 30; th
         parsed: Dict[str, Any],
         enriched_context: Dict[str, Any] | None = None,
     ) -> CreativeSpec:
+        clarification_questions = parsed.get('clarification_questions', [])
+        if not isinstance(clarification_questions,list) or len(clarification_questions)>3 or any(not isinstance(q,str) or not q.strip() or len(q)>500 for q in clarification_questions):
+            raise ValueError('Invalid creative clarification questions')
         objective = self._text(parsed.get("objective"), "objective")
         constraints = self._text_list(parsed.get("immutable_constraints"), "immutable_constraints", 3, 6)
         risks = self._text_list(parsed.get("risk_forecast"), "risk_forecast", 2, 4)
@@ -241,7 +247,7 @@ generation_spec.duration_seconds is a provisional valid integer from 4 to 30; th
             production_strategy=production_strategy,
             production_direction=production_direction,
             acceptance_criteria=acceptance_criteria,
-            enriched_context=enriched_context or {},
+            enriched_context={**(enriched_context or {}),'creative_questions':clarification_questions},
             planning_source="doubao_seed_2_1_pro",
             planning_notice="Doubao Seed 2.1 Pro converted this brief into a structured control plan. Review the budget before approving it.",
         )

@@ -139,7 +139,7 @@ class ArkVideoGenerator:
                 for item in delta.get("change_set", []) if isinstance(item, dict)
             )
             repair = f" Targeted repair only: {repair_items}." if repair_items else ""
-            quality_instruction = "Prioritise crisp subject edges, readable important details, and stable visual texture." if output["quality_target"] == "high" else "Prioritise a coherent, efficient first-pass visual result."
+            quality_instruction = "Use premium art direction, intentional composition, sophisticated design and refined materials consistent with the agreed visual style. Prioritise crisp subject edges, readable important details, and stable visual texture." if output["quality_target"] == "high" else "Prioritise a coherent, efficient first-pass visual result."
             result = (
                 f"Create one coherent short video following this objective: {contract.get('objective', spec.goal)}. "
                 f"Follow this approved semantic-beat timeline in order: {shot_text}. The beat boundaries are control targets, not a demand for hard cuts. Preserve these immutable constraints: {constraints}."
@@ -154,7 +154,7 @@ class ArkVideoGenerator:
         )
         constraints = "; ".join(spec.immutable_character_attributes)
         repair = f" Repair priority: {repair_task.prompt}" if repair_task else ""
-        quality_instruction = "Prioritise crisp subject edges, readable important details, and stable visual texture." if output["quality_target"] == "high" else "Prioritise a coherent, efficient first-pass visual result."
+        quality_instruction = "Use premium art direction, intentional composition, sophisticated design and refined materials consistent with the agreed visual style. Prioritise crisp subject edges, readable important details, and stable visual texture." if output["quality_target"] == "high" else "Prioritise a coherent, efficient first-pass visual result."
         result = (
             f"Create one coherent short video following this objective: {spec.goal}. "
             f"Use this ordered semantic-beat timeline: {shot_text}. "
@@ -170,6 +170,6 @@ class ArkVideoGenerator:
                     for a in state.creative_spec.multimodal_assets if a.get('generated_character_plan')]
         if not bindings:
             return ''
-        return ('\nCharacter identity references: ' + json.dumps(bindings, ensure_ascii=False) +
-                '. Each referenced sheet shows four views of ONE character. Use it only to preserve that character identity and wardrobe. '
+        return ('\nShared visual style for the entire video and all characters: '+str(state.creative_spec.production_direction.get('character_visual_style',''))+'\nCharacter identity references: ' + json.dumps(bindings, ensure_ascii=False) +
+                '. Each referenced sheet shows reference views of ONE character. Use it only to preserve that character identity and wardrobe. '
                 'Render the storyboard as one normal full-frame video; never render a turnaround sheet, split-screen grid, labels or duplicate views of a person.')

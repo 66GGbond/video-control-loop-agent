@@ -26,7 +26,8 @@ class CharacterReferencesTests(unittest.TestCase):
         self.state.status = 'planning_ready'; self.state.current_version_id = 'none'
         self.env = patch.dict(os.environ, {'ARK_API_KEY':'test', 'VIDEO_PROVIDER':'auto', 'SEEDREAM_PRO_API_KEY':'test', 'SEEDREAM_FLASH_API_KEY':'', 'SEEDANCE_25_API_KEY':'test', 'SEEDANCE_20_API_KEY':'', 'MINIMAX_API_KEY':''})
         self.env.start(); self.addCleanup(self.env.stop)
-        self.people = {'required':True, 'characters':[
+        self.state.creative_spec.source_prompt+=' 精致3D'
+        self.people = {'shared_style':{'description':'精致3D，统一比例与材质，精致高级的角色造型','evidence':'精致3D','confidence':.98,'explicit':True},'questions':[], 'required':True, 'characters':[
             {'name':'女主角','appearance':'短发，深蓝校服','reference_names':[]},
             {'name':'对手','appearance':'长发，灰色校服','reference_names':[]}]}
 
@@ -134,3 +135,64 @@ class CharacterReferencesTests(unittest.TestCase):
             self.assertEqual(choice['selected_model'],SEEDANCE_25)
             self.assertNotIn('user_model',choice)
             self.assertEqual(self.state.creative_spec.shots[-1]['end_seconds'],30)
+
+    def test_ambiguous_style_asks_once_and_blocks_all_generation(self):
+        value={**self.people,'shared_style':{'description':'电影感','evidence':'校园','confidence':.99,'explicit':False}}
+        with patch('backend.app.character_references.request_json',return_value=value),patch.object(ImageTasks,'recommend') as recommend:
+            plan=chars.prepare(self.state,self.store,self.visitor)
+            self.assertEqual(plan['status'],'awaiting_clarification');recommend.assert_not_called()
+            self.assertTrue(self.state.autopilot_paused)
+            self.assertIn('3D',self.state.conversation[-1]['text'])
+            count=len(self.state.conversation);chars.prepare(self.state,self.store,self.visitor)
+            self.assertEqual(len(self.state.conversation),count)
+        with self.assertRaises(ValueError):chars.start(self.state,self.store,self.visitor,plan['id'],PRO)
+        with self.assertRaises(ValueError):chars.ensure_ready(self.state)
+
+    def test_dialogue_answer_locks_one_style_for_all_three_view_prompts(self):
+        with patch('backend.app.character_references.request_json',return_value={**self.people,'shared_style':{}}):
+            chars.assess(self.state)
+        with patch('backend.app.character_references.request_json',return_value=self.people) as decision,patch('backend.app.image_tasks.request_json',return_value={'recommended_model':PRO,'reason':'quality'}):
+            chars.answer(self.state,'统一精致3D',self.store,self.visitor)
+            self.assertIn('统一精致3D',decision.call_args.args[3]['creative_answers'])
+        plan=self.state.creative_spec.character_reference_plan
+        self.assertEqual(plan['status'],'planned');self.assertEqual(plan['view_count'],3)
+        prompts=[chars.document(self.state.creative_spec,p,'n')['nodes'][0]['text'] for p in plan['characters']]
+        for prompt in prompts:
+            self.assertFalse(chars.inputs(chars.document(self.state.creative_spec,plan['characters'][0],'n'),'n')['watermark']);self.assertIn('Exactly THREE',prompt);self.assertIn('PURE WHITE',prompt);self.assertIn('NO TEXT',prompt)
+            self.assertIn('Sophisticated design',prompt);self.assertTrue(prompt.endswith(plan['shared_style']['description']))
+        self.assertEqual(self.state.creative_spec.production_direction['character_visual_style'],plan['shared_style']['description'])
+
+    def test_low_confidence_and_failed_answer_do_not_bypass_dialogue(self):
+        value={**self.people,'shared_style':{**self.people['shared_style'],'confidence':.4}}
+        with patch('backend.app.character_references.request_json',return_value=value):plan=chars.assess(self.state)
+        with patch('backend.app.character_references.request_json',side_effect=ValueError):
+            with self.assertRaises(ValueError):chars.answer(self.state,'精致3D',self.store,self.visitor)
+        self.assertIs(self.state.creative_spec.character_reference_plan,plan)
+        self.assertEqual(plan['status'],'awaiting_clarification')
+
+
+class CharacterDialogueHTTPTests(unittest.TestCase):
+    from tests.test_local_server import LocalServerTests as _helpers
+    setUp=_helpers.setUp
+    cleanup=_helpers.cleanup
+    request=_helpers.request
+    session=_helpers.session
+
+    def test_answer_updates_main_plan_and_character_style_without_paid_generation(self):
+        from backend.app import server
+        original=create_demo_state('校园反转剧情')
+        original.creative_spec.character_reference_plan={'schema_version':2,'id':'pending','required':True,'status':'awaiting_clarification','questions':['统一什么风格？'],'characters':[]}
+        original.conversation=[{'id':'q','role':'assistant','kind':'creative_clarification','text':'统一什么风格？'}]
+        visitor=self.session();self.store.save(visitor,original)
+        def replan(prompt,*args,**kwargs):return create_demo_state(prompt)
+        decision={'required':True,'characters':[{'name':'女主角','appearance':'校服','reference_names':[]}],
+                  'questions':[],'shared_style':{'description':'精致3D','evidence':'精致3D','confidence':.98,'explicit':True}}
+        with patch.dict(os.environ,{'ARK_API_KEY':'test','SEEDREAM_PRO_API_KEY':'test'}),patch.object(server,'create_enriched_project_state',side_effect=replan),patch('backend.app.character_references.request_json',return_value=decision),patch('backend.app.image_tasks.request_json',return_value={'recommended_model':PRO,'reason':'quality'}),patch.object(ImageTasks,'_launch') as paid:
+            status,data=self.request('/api/revise-brief',{'instruction':'精致3D','language':'zh'})
+            self.assertEqual(status,200,data);paid.assert_not_called()
+        self.assertEqual(data['project_id'],original.project_id)
+        self.assertIn('精致3D',data['creative_spec']['source_prompt'])
+        self.assertEqual(data['creative_spec']['character_reference_plan']['status'],'planned')
+        self.assertEqual(data['creative_spec']['character_reference_plan']['view_count'],3)
+        self.assertEqual(data['conversation'][0]['id'],'q')
+        self.assertEqual(data['conversation'][-2]['text'],'精致3D')

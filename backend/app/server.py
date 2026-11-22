@@ -383,6 +383,13 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 instruction = str(payload.get("instruction", "")).strip()
                 if not instruction:
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "Enter a revision before sending it to the Agent"})
+                if self.state.creative_spec.character_reference_plan.get('status')=='awaiting_clarification':
+                    original=self.state
+                    self.state=start_user_directed_revision(original,instruction,payload.get('language'))
+                    self.state.creative_spec.character_reference_plan=original.creative_spec.character_reference_plan
+                    self.state.creative_spec.enriched_context['creative_answers']=list(original.creative_spec.enriched_context.get('creative_answers',[]))
+                    characters.answer(self.state,instruction,SESSIONS,self.visitor_id)
+                    return self._json(HTTPStatus.OK,present(self.state))
                 previous = copy(self.state)
                 if self.state.status in {"planning_ready", "awaiting_first_video", "awaiting_context_confirmation"}:
                     original = self.state

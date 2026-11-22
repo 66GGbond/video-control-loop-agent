@@ -700,7 +700,7 @@ function renderProjectStatus(state) {
     plan: state.status === "needs_segmentation"
       ? ["Multi-segment plan required", "The Agent determined this brief should not be compressed into one 30-second clip. Revise the brief or plan separate segments.", "Segment plan", "Revise brief"]
       : ["Control plan ready for approval", "Review the Agent's planned shots, constraints, risks, and bounded repair budget.", "Plan ready", "Approve control plan"],
-    characters: ["Character reference stage", "Prepare four views of the important characters before video generation.", "Character references", "Generate four views"],
+    characters: ["Character reference stage", "Prepare three views of the important characters before video generation.", "Character references", "Generate three views"],
     version: ["Video version in production", "The approved plan is being rendered or prepared as evidence for evaluation.", "Version", "Wait for video evidence"],
     quality: ["Quality control loop active", "Review the selected version, its evidence-backed quality result, and the Agent's next decision.", "Quality", "Review version result"],
   };
@@ -849,6 +849,7 @@ function renderCreativeAgent(state, spec, enrichedContext) {
     : state.status === "awaiting_context_confirmation"
       ? "Add a constraint or clarification while you answer the required question above."
       : "Add a constraint or request a revision for the next eligible version.";
+  if(spec.character_reference_plan?.status==='awaiting_clarification')composer.dataset.placeholder=I18n.text("Tell the Agent your preferred visual style or clarify its question.");
   attachments.hidden = !isInitialBrief;
   submit.textContent = isInitialBrief ? "Generate control plan" : "Send update";
   const budgetControl = document.querySelector("#repair-budget-control");
@@ -1357,6 +1358,12 @@ function render(state) {
     runLoop.disabled = qualityLoopPending || !canRunQuality;
     if (!qualityLoopPending) runLoop.textContent = canRunQuality ? "Run quality loop" : "Quality assessed";
   }
+  document.querySelector('#generate-repair').disabled=spec.character_reference_plan?.status==='awaiting_clarification';
+  if(spec.character_reference_plan?.status==='awaiting_clarification'){
+    generateButton.disabled=true;
+    videoStatus.textContent='Awaiting creative clarification';
+    document.querySelector('#video-stage-copy').textContent='Confirm the visual style in the Creative Agent conversation';
+  }
   renderVersionNavigator(state);
   if (EVALUATION_STATES.has(state.status)) renderEvaluation(state);
   window.dispatchEvent(new CustomEvent("vclstatechange", {detail:state}));
@@ -1640,6 +1647,10 @@ async function generateVideo(event) {
     await prepareCharacterReferences();
     if (renderedState.creative_spec.character_reference_plan?.status==='generated') await attachCharacterReferences();
     const characters = renderedState.creative_spec.character_reference_plan;
+    if (characters?.status==='awaiting_clarification') {
+      if(autopilotIsRunning(renderedState))render(await endpoint('/api/autopilot',{method:'POST',body:JSON.stringify({action:'pause'})}));
+      setCreativeAgentOpen(true,true);button.disabled=false;return;
+    }
     if (characters?.required && (characters.status !== 'ready' || !characters.attached)) {
       if (autopilotIsRunning(renderedState)) render(await endpoint('/api/autopilot', {method:'POST',body:JSON.stringify({action:'pause'})}));
       location.hash = 'vcl';

@@ -1,6 +1,6 @@
 let characterPlanningPending=null,characterPollTimer=null,productionDefaultsTimer=null;
 const productionAttempts=new Set();
-let characterError='',characterAttachPending=null;
+let characterError='',characterAttachPending=null,lastCreativeQuestion='';
 
 function renderCharacterReferences(state) {
   const spec=state.creative_spec,section=document.querySelector('#character-references');
@@ -8,6 +8,10 @@ function renderCharacterReferences(state) {
   if(section.hidden){clearTimeout(characterPollTimer);characterPollTimer=null;return;}
   const plan=spec.character_reference_plan||{},active=['planning_ready','awaiting_first_video','awaiting_repair_upload'].includes(state.status);
   if(!plan.id&&!active){section.hidden=true;return;}
+  document.querySelector('#character-reference-title').textContent=I18n.text(plan.schema_version!==2&&['ready','generated','generating','failed','uncertain'].includes(plan.status)?'Character references (legacy)':'Character three views');
+  const waiting=plan.status==='awaiting_clarification';
+  document.querySelector('#character-style-dialogue').hidden=!waiting;
+  if(waiting&&lastCreativeQuestion!==plan.id&&document.body.dataset.workspace!=='history'){lastCreativeQuestion=plan.id;setCreativeAgentOpen(true);}
   const select=document.querySelector('#character-image-model'),before=select.value;
   select.replaceChildren(...(plan.model_choice?.candidates||[]).filter(c=>c.configured).map(c=>{const o=document.createElement('option');o.value=c.model_id;o.textContent=c.name;return o;}));
   select.value=plan.selected_model||before||plan.model_choice?.recommended_model||'';
@@ -15,13 +19,14 @@ function renderCharacterReferences(state) {
   select.hidden=!plan.required;select.disabled=!active||plan.status!=='planned'||!plan.model_choice;
   const generate=document.querySelector('#generate-character-references');
   generate.hidden=!plan.required||plan.status!=='planned';generate.disabled=!active||!select.value||Boolean(characterPlanningPending);
-  const retry=document.querySelector('#plan-character-references');retry.textContent=I18n.text(plan.status==='generated'?'Prepare video references':'Retry character planning');retry.hidden=(plan.status==='generated'? !characterError : Boolean(plan.status==='skipped'||plan.model_choice||characterPlanningPending))||!active;
-  const statuses={planned:'Important characters selected',generating:'Generating character references…',generated:'Preparing video references…',ready:'Character references attached to video',skipped:'No character references needed',failed:'Character generation failed. Check the Ark console before starting a new plan.',uncertain:'Character generation is unconfirmed. Check the Ark console; it will not retry automatically.'};
+  const retry=document.querySelector('#plan-character-references');retry.textContent=I18n.text(plan.status==='generated'?'Prepare video references':'Retry character planning');retry.hidden=(plan.status==='generated'? !characterError : Boolean(waiting||plan.status==='skipped'||plan.model_choice||characterPlanningPending))||!active;
+  const statuses={awaiting_clarification:'Confirm the visual style in the Creative Agent conversation',planned:'Important characters selected',generating:'Generating character references…',generated:'Preparing video references…',ready:'Character references attached to video',skipped:'No character references needed',failed:'Character generation failed. Check the Ark console before starting a new plan.',uncertain:'Character generation is unconfirmed. Check the Ark console; it will not retry automatically.'};
   document.querySelector('#character-reference-status').textContent=characterError||I18n.text(statuses[plan.status]||'Planning character references…');
+  if(!characterError&&plan.schema_version===2&&['planned','ready'].includes(plan.status)&&plan.shared_style?.description)document.querySelector('#character-reference-status').textContent=I18n.text('Shared style')+' · '+plan.shared_style.description;
   const grid=document.querySelector('#character-reference-grid');grid.replaceChildren();
   for(const person of plan.characters||[]) {
     const card=document.createElement('article');card.className='character-reference-card';
-    if(person.output_url){const link=document.createElement('a');link.href=person.output_url;link.target='_blank';link.rel='noopener';link.title=I18n.text('Open original image');const img=document.createElement('img');img.src=person.output_url;img.alt=person.name+' · '+I18n.text('Character four views');link.append(img);card.append(link);}
+    if(person.output_url){const link=document.createElement('a');link.href=person.output_url;link.target='_blank';link.rel='noopener';link.title=I18n.text('Open original image');const img=document.createElement('img');img.src=person.output_url;img.alt=person.name+' · '+I18n.text('Character three views');link.append(img);card.append(link);}
     else {const placeholder=document.createElement('div');placeholder.className='character-reference-placeholder';placeholder.innerHTML='<svg class="ui-icon" aria-hidden="true"><use href="#i-image"/></svg>';card.append(placeholder);}
     const name=document.createElement('strong');name.textContent=person.name;name.translate=false;card.append(name);
     if(person.status&&person.status!=='succeeded'){const status=document.createElement('small');status.textContent=I18n.text({running:'Generating…',failed:'Failed',uncertain:'Unconfirmed'}[person.status]||'Waiting');card.append(status);}
@@ -32,7 +37,9 @@ function renderCharacterReferences(state) {
 }
 async function prepareCharacterReferences() {
   const plan=renderedState?.creative_spec?.character_reference_plan;
-  if(plan?.status==='skipped'||plan?.model_choice||['generated','ready','generating','failed','uncertain'].includes(plan?.status))return renderedState;
+  if(plan?.status==='awaiting_clarification')return renderedState;
+  if(plan?.schema_version!==2&&plan?.status==='planned'){}
+  else if(plan?.status==='skipped'||plan?.model_choice||['generated','ready','generating','failed','uncertain'].includes(plan?.status))return renderedState;
   if(characterPlanningPending)return characterPlanningPending;
   characterError='';
   characterPlanningPending=endpoint('/api/plan-character-references',{method:'POST',body:'{}'}).then(state=>{render(state);return state;}).catch(error=>{characterError=I18n.text(error.message);throw error;}).finally(()=>{characterPlanningPending=null;renderCharacterReferences(renderedState);});
@@ -78,3 +85,5 @@ document.querySelector('#generate-character-references').addEventListener('click
   catch(error){characterError=I18n.text(error.message);renderCharacterReferences(renderedState);}
 });
 window.addEventListener('languagechange',()=>{if(renderedState)renderCharacterReferences(renderedState);});
+
+document.querySelector('#character-style-dialogue').addEventListener('click',()=>setCreativeAgentOpen(true,true));
