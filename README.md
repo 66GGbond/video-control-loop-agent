@@ -107,3 +107,7 @@ The H3 V2 adapter submits an asynchronous task, polls its status, downloads the 
 - Rubric v1.2 specifies conditional audio, ASR, audio-visual alignment, and lip-sync gates; the current runtime executes local audio-track presence/duration observation, while ASR, alignment, and lip-sync remain future tools.
 - Every provider endpoint must be capability-validated before accepting image, video, or audio inputs.
 - Next: validate three real-video cases—brand/product integrity, character continuity, and action/narrative completion.
+
+## Public trial deployment
+
+[体验码、30 秒额度、锁定规则与部署说明](docs/public-demo-deployment.md)。体验码由作者在服务器设置为四位数字；不要在前端或仓库中保存体验码或 API Key。

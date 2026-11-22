@@ -19,6 +19,11 @@
         </div>
       </header>
 
+      <section class="trial-bar" aria-label="体验码与视频额度">
+        <p id="trial-status" role="status" aria-live="polite">输入体验码，解锁 AI 体验；也可直接查看演示案例。</p>
+        <div><button id="demo-open" class="secondary" type="button">查看演示案例</button><button id="trial-open" class="primary" type="button">输入体验码</button></div>
+      </section>
+      <p id="demo-notice" class="trial-demo-notice" hidden>演示案例 · 以下控制计划和质检结果来自预置示例，不会调用模型或消耗视频额度。</p>
       <section id="project-status-panel" class="project-status-panel" aria-labelledby="project-status-title">
         <div class="project-status-heading">
           <div><p class="section-kicker">PROJECT STATUS</p><h2 id="project-status-title">Ready for a creative brief</h2><p id="project-status-copy">Describe the video to the Creative Agent to begin the controlled production loop.</p></div>
@@ -155,6 +160,21 @@
       </div>
       <video id="review-video-player" controls playsinline preload="metadata"></video>
     </dialog>
-    <script src="app.js?v=timing-plan-v3"></script>
+    <dialog id="trial-dialog" class="trial-dialog" aria-labelledby="trial-title">
+      <form id="trial-form" novalidate>
+        <h2 id="trial-title">输入体验码</h2><p>输入体验码，解锁 AI 体验。</p>
+        <label for="trial-code">体验码</label>
+        <input id="trial-code" type="password" inputmode="numeric" maxlength="4" autocomplete="off" placeholder="请输入体验码" aria-describedby="trial-error" />
+        <p id="trial-error" class="trial-error" role="alert"></p>
+        <div class="trial-dialog-actions"><button id="trial-cancel" class="secondary" type="button">取消</button><button id="trial-submit" class="primary" type="submit">确认</button></div>
+      </form>
+    </dialog>
+    <dialog id="quota-confirm-dialog" class="trial-dialog" aria-labelledby="quota-confirm-title">
+      <form method="dialog"><h2 id="quota-confirm-title">确认视频额度</h2><p id="quota-confirm-copy"></p>
+        <div class="trial-dialog-actions"><button class="secondary" value="cancel">取消</button><button id="quota-confirm-button" class="primary" value="confirm">开始生成</button></div>
+      </form>
+    </dialog>
+    <script src="trial.js?v=trial-v1"></script>
+    <script src="app.js?v=trial-v1"></script>
   </body>
 </html>

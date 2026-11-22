@@ -11,12 +11,18 @@ import base64
 import binascii
 import shutil
 import uuid
+import threading
+import hashlib
+from functools import wraps
+from http.cookies import SimpleCookie
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib import request as urllib_request
+from urllib.error import HTTPError
 
+from .access import TrialStore, AccessError
 from .agent.planner import DeepSeekControlPlanner
 from .agent.context import ContextEnrichmentAgent
 from .agent.generation_spec import validate_brief_duration
@@ -28,7 +34,7 @@ from .tools.providers import create_video_generator
 
 ROOT = Path(__file__).resolve().parents[2]
 FRONTEND = ROOT / "frontend"
-RUNTIME = ROOT / ".runtime"
+RUNTIME = Path(os.getenv("RUNTIME_DIR", str(ROOT / ".runtime")))
 # Keep the local composition payload bounded independently of any provider.
 # Adapters decide later which retained assets have a documented request path.
 MAX_REQUEST_BYTES = 64 * 1024 * 1024
@@ -49,12 +55,14 @@ def load_local_env(path: Path) -> None:
             "DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "DEEPSEEK_API_BASE_URL", "ARK_API_KEY", "ARK_VISION_MODEL",
             "ARK_VIDEO_TEXT_MODEL", "ARK_VIDEO_REFERENCE_MODEL", "VIDEO_PROVIDER",
             "MINIMAX_API_KEY", "MINIMAX_VIDEO_MODEL", "MINIMAX_VIDEO_RESOLUTION", "MINIMAX_API_BASE_URL",
+            "TRIAL_CODES", "TRIAL_AI_CALL_LIMIT", "COOKIE_SECURE", "HOST", "PORT", "TRUST_PROXY",
         } and value.strip():
             os.environ.setdefault(key, value.strip())
 
 
 load_local_env(ROOT / ".env")
-STATE = create_empty_state()
+TRIAL = TrialStore(RUNTIME)
+VISITOR_LOCKS = [threading.RLock() for _ in range(128)]
 ORCHESTRATOR = create_orchestrator()
 CONTROL_PLANNER = DeepSeekControlPlanner()
 CONTEXT_AGENT = ContextEnrichmentAgent()
@@ -128,22 +136,76 @@ def start_user_directed_revision(original: ProjectState, instruction: str) -> Pr
     return revised
 
 
+def visitor_request(method):
+    @wraps(method)
+    def wrapped(self):
+        if not urlparse(self.path).path.startswith("/api/"):
+            return method(self)
+        cookie = SimpleCookie()
+        try:
+            cookie.load(self.headers.get("Cookie", ""))
+        except Exception:
+            pass
+        self.visitor_id, self.visitor_cookie = TRIAL.visitor(cookie["trial_visitor"].value if "trial_visitor" in cookie else "")
+        lock = VISITOR_LOCKS[int(hashlib.sha256(self.visitor_id.encode()).hexdigest(), 16) % len(VISITOR_LOCKS)]
+        with lock:
+            self.state = TRIAL.load(self.visitor_id) or create_empty_state()
+            # Same-origin JSON requests only; reject cross-site form/fetch submissions.
+            if self.command == "POST":
+                origin = self.headers.get("Origin")
+                if (origin and urlparse(origin).netloc != self.headers.get("Host")) or self.headers.get("Sec-Fetch-Site") == "cross-site":
+                    return self._json(403, {"error": "请求来源无效。"})
+                if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
+                    return self._json(415, {"error": "请使用 JSON 请求。"})
+            try:
+                return method(self)
+            finally:
+                TRIAL.save(self.visitor_id, self.state)
+    return wrapped
+
+
 class DemoHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(FRONTEND), **kwargs)
 
+    @visitor_request
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/api/state":
-            return self._json(HTTPStatus.OK, present(STATE))
+            return self._json(HTTPStatus.OK, present(self.state))
         if path.startswith("/api/generated-video/"):
             return self._serve_generated_video(path.rsplit("/", 1)[-1])
         return super().do_GET()
 
+    @visitor_request
     def do_POST(self):
-        global STATE
         path = urlparse(self.path).path
         try:
+            if path == "/api/trial/verify":
+                TRIAL.limit_rate("verify-visitor:" + self.visitor_id, 10)
+                TRIAL.limit_rate("verify-ip:" + TRIAL.digest(self._client_ip()), 30, 3600)
+                trial = TRIAL.verify(self.visitor_id, self._read_json().get("code"))
+                return self._json(HTTPStatus.OK, {"trial": trial})
+            if path == "/api/demo":
+                from .demo import create_demo_state
+                from .agent.orchestrator import AgentOrchestrator
+                from .agent.planner import FixturePlanner
+                from .tools.evaluator import FixtureVisionEvaluator
+                if self.state.status == "generating_video":
+                    raise AccessError("视频生成中，请等待生成结果。", 409, "generation_pending")
+                self.state = create_demo_state()
+                agent = AgentOrchestrator(FixtureVisionEvaluator(), FixturePlanner(), prompt_compiler=PromptCompiler())
+                agent.run_once(self.state)
+                agent.simulate_repaired_upload(self.state)
+                agent.run_once(self.state)
+                return self._json(HTTPStatus.OK, present(self.state))
+            paid_paths = {"/api/create-project", "/api/confirm-context", "/api/revise-brief", "/api/generate-video", "/api/run-loop", "/api/update-budget"}
+            if path not in {"/api/reset"}:
+                TRIAL.require(self.visitor_id, paid=path in paid_paths)
+            if path in paid_paths:
+                TRIAL.limit_rate("ai-ip:" + TRIAL.digest(self._client_ip()), 60, 3600)
+            if path in {"/api/create-project", "/api/reset"} and self.state.status == "generating_video":
+                raise AccessError("视频生成中，请等待生成结果。", 409, "generation_pending")
             if path == "/api/create-project":
                 payload = self._read_json()
                 prompt = str(payload.get("prompt", "")).strip()
@@ -152,85 +214,85 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 validate_brief_duration(prompt)
                 assets = self._normalise_multimodal_assets(payload)
                 reference_asset = next((asset for asset in assets if asset["media_type"] == "image"), None)
-                STATE = create_enriched_project_state(
+                self.state = create_enriched_project_state(
                     prompt, reference_asset, CONTROL_PLANNER, CONTEXT_AGENT,
                     multimodal_assets=assets,
                 )
-                return self._json(HTTPStatus.OK, present(STATE))
+                return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/confirm-context":
-                if STATE.status != "awaiting_context_confirmation":
+                if self.state.status != "awaiting_context_confirmation":
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "There is no pending context question for this project"})
                 payload = self._read_json()
                 target_market = str(payload.get("target_market", "")).strip()
                 if not target_market:
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "A target market or region is required for this seasonal request"})
-                STATE = create_enriched_project_state(
-                    STATE.creative_spec.source_prompt,
-                    STATE.creative_spec.reference_asset,
+                self.state = create_enriched_project_state(
+                    self.state.creative_spec.source_prompt,
+                    self.state.creative_spec.reference_asset,
                     CONTROL_PLANNER,
                     CONTEXT_AGENT,
                     target_market,
-                    STATE.creative_spec.multimodal_assets,
+                    self.state.creative_spec.multimodal_assets,
                 )
-                STATE.history.append({
+                self.state.history.append({
                     "at": "local-demo",
                     "phase": "human_approval",
                     "event": "context_confirmed",
                     "payload": {"message": "User provided the target market required for seasonal context."},
                 })
-                return self._json(HTTPStatus.OK, present(STATE))
+                return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/approve-plan":
-                if STATE.status != "planning_ready":
+                if self.state.status != "planning_ready":
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "Create a control plan before approving it"})
                 payload = self._read_json()
-                budget = int(payload.get("max_iterations", STATE.creative_spec.recommended_iterations))
+                budget = int(payload.get("max_iterations", self.state.creative_spec.recommended_iterations))
                 if budget < 0 or budget > MAX_REPAIR_ITERATIONS:
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": f"Repair budget must be between 0 and {MAX_REPAIR_ITERATIONS}"})
-                STATE.creative_spec.max_iterations = budget
-                STATE.status = "awaiting_first_video"
-                return self._json(HTTPStatus.OK, present(STATE))
+                self.state.creative_spec.max_iterations = budget
+                self.state.status = "awaiting_first_video"
+                return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/autopilot":
                 payload = self._read_json()
                 action = str(payload.get("action", "start")).strip()
                 if action == "pause":
-                    if STATE.execution_mode != "autopilot":
+                    if self.state.execution_mode != "autopilot":
                         return self._json(HTTPStatus.BAD_REQUEST, {"error": "Autopilot is not running for this project"})
-                    STATE.autopilot_paused = True
-                    STATE.history.append({
+                    self.state.autopilot_paused = True
+                    self.state.history.append({
                         "at": "local-demo",
                         "phase": "human_approval",
                         "event": "autopilot_pause_requested",
                         "payload": {"message": "User requested a pause after the current provider action completes."},
                     })
-                    return self._json(HTTPStatus.OK, present(STATE))
+                    return self._json(HTTPStatus.OK, present(self.state))
                 allowed = {"planning_ready", "awaiting_first_video", "ready_for_evaluation", "repair_uploaded", "awaiting_repair_upload", "generating_video", "generated_video_ready", "stopped_budget_exhausted"}
-                if STATE.status not in allowed:
+                if self.state.status not in allowed:
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "Autopilot can start only while a plan or an unfinished version is available"})
-                if STATE.status == "planning_ready":
-                    STATE.status = "awaiting_first_video"
-                STATE.execution_mode = "autopilot"
-                STATE.autopilot_paused = False
-                STATE.history.append({
+                if self.state.status == "planning_ready":
+                    self.state.status = "awaiting_first_video"
+                self.state.execution_mode = "autopilot"
+                self.state.autopilot_paused = False
+                self.state.history.append({
                     "at": "local-demo",
                     "phase": "human_approval",
                     "event": "autopilot_authorized",
-                    "payload": {"message": f"User authorized the Agent to run within its recommended limit of {STATE.creative_spec.max_iterations} repair iteration(s)."},
+                    "payload": {"message": f"User authorized the Agent to run within its recommended limit of {self.state.creative_spec.max_iterations} repair iteration(s)."},
                 })
-                return self._json(HTTPStatus.OK, present(STATE))
+                return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/revise-brief":
                 payload = self._read_json()
                 instruction = str(payload.get("instruction", "")).strip()
                 if not instruction:
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "Enter a revision before sending it to the Agent"})
-                if STATE.status in {"planning_ready", "awaiting_first_video", "awaiting_context_confirmation"}:
-                    original = STATE
+                if self.state.status in {"planning_ready", "awaiting_first_video", "awaiting_context_confirmation"}:
+                    original = self.state
                     target_market = next(
                         (str(item.get("value", "")) for item in original.creative_spec.enriched_context.get("facts", []) if item.get("key") == "target_market"),
                         "",
                     )
                     revised_prompt = f"{original.creative_spec.source_prompt}\n\nAdditional user direction: {instruction}"
                     validate_brief_duration(revised_prompt)
-                    STATE = create_enriched_project_state(
+                    self.state = create_enriched_project_state(
                         revised_prompt,
                         original.creative_spec.reference_asset,
                         CONTROL_PLANNER,
@@ -238,48 +300,64 @@ class DemoHandler(SimpleHTTPRequestHandler):
                         target_market,
                         original.creative_spec.multimodal_assets,
                     )
-                    STATE.history = [*original.history, {
+                    self.state.history = [*original.history, {
                         "at": "local-demo",
                         "phase": "human_approval",
                         "event": "control_plan_revised",
                         "payload": {"message": "User added a direction before first-version generation; Agent recompiled the control plan."},
                     }]
-                    return self._json(HTTPStatus.OK, present(STATE))
-                if STATE.status == "published":
-                    STATE = start_user_directed_revision(STATE, instruction)
-                    return self._json(HTTPStatus.OK, present(STATE))
-                if STATE.status == "awaiting_repair_upload" and STATE.latest_repair_task:
-                    STATE.latest_repair_task.prompt += f" User-directed refinement: {instruction}"
-                    STATE.latest_repair_task.continuity_constraints.append(f"User-directed refinement: {instruction}")
-                    PROMPT_COMPILER.compile(STATE, STATE.latest_repair_task, self._next_version_id(STATE.current_version_id))
+                    return self._json(HTTPStatus.OK, present(self.state))
+                if self.state.status == "published":
+                    self.state = start_user_directed_revision(self.state, instruction)
+                    return self._json(HTTPStatus.OK, present(self.state))
+                if self.state.status == "awaiting_repair_upload" and self.state.latest_repair_task:
+                    self.state.latest_repair_task.prompt += f" User-directed refinement: {instruction}"
+                    self.state.latest_repair_task.continuity_constraints.append(f"User-directed refinement: {instruction}")
+                    PROMPT_COMPILER.compile(self.state, self.state.latest_repair_task, self._next_version_id(self.state.current_version_id))
                 else:
-                    STATE.pending_user_direction = instruction
-                STATE.history.append({
+                    self.state.pending_user_direction = instruction
+                self.state.history.append({
                     "at": "local-demo",
                     "phase": "human_approval",
                     "event": "next_version_direction_saved",
                     "payload": {"message": "User direction was retained for the next eligible version; existing evaluated evidence remains immutable."},
                 })
-                return self._json(HTTPStatus.OK, present(STATE))
+                return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/generate-video":
-                if (STATE.creative_spec.production_strategy or {}).get("mode") == "needs_segmentation":
+                if (self.state.creative_spec.production_strategy or {}).get("mode") == "needs_segmentation":
                     return self._json(HTTPStatus.BAD_REQUEST, {
                         "error": "This brief requires a multi-segment production plan. The single-clip generator is intentionally blocked rather than compressing the story."
                     })
-                if STATE.status not in {"awaiting_first_video", "awaiting_repair_upload"}:
+                if self.state.status not in {"awaiting_first_video", "awaiting_repair_upload"}:
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "Approve a control plan or wait for a repair decision before generating a video"})
-                repairing = STATE.status == "awaiting_repair_upload"
-                if repairing and not STATE.latest_repair_task:
+                repairing = self.state.status == "awaiting_repair_upload"
+                if repairing and not self.state.latest_repair_task:
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "The Agent must create a repair task before generating the next version"})
-                version_id = "v1" if STATE.current_version_id == "none" else self._next_version_id(STATE.current_version_id)
-                PROMPT_COMPILER.compile(STATE, STATE.latest_repair_task if repairing else None, version_id)
-                job = VIDEO_GENERATOR.submit(STATE, version_id, STATE.latest_repair_task if repairing else None)
-                STATE.generation_jobs.append(job)
-                review = next((item for item in STATE.version_reviews if item.version_id == version_id), None)
+                version_id = "v1" if self.state.current_version_id == "none" else self._next_version_id(self.state.current_version_id)
+                PROMPT_COMPILER.compile(self.state, self.state.latest_repair_task if repairing else None, version_id)
+                if not VIDEO_GENERATOR.available():
+                    raise ValueError("视频生成暂未配置，请联系作品作者。")
+                selection = VIDEO_GENERATOR.select_tool(self.state)
+                if selection.get("request_mode") == "unavailable":
+                    raise ValueError(selection["reason"])
+                # Reserve before network I/O. Uncertain submission outcomes remain held
+                # for operator reconciliation; never retry a possibly paid task blindly.
+                reservation = TRIAL.reserve(self.visitor_id, self.state.creative_spec.generation_spec["duration_seconds"])
+                try:
+                    job = VIDEO_GENERATOR.submit(self.state, version_id, self.state.latest_repair_task if repairing else None)
+                except (ValueError, OSError) as exc:
+                    cause = exc if isinstance(exc, HTTPError) else exc.__cause__
+                    if isinstance(cause, HTTPError) and cause.code in {400, 401, 402, 403, 404, 405, 413, 415, 422, 429}:
+                        TRIAL.release(reservation)
+                        raise AccessError("生成请求未被接受，本次未扣除额度，请联系作品作者或稍后重试。", 502, "submission_rejected") from exc
+                    raise AccessError("生成结果暂未确认，额度暂时预留，请联系作品作者确认后再试。", 503, "submission_uncertain") from exc
+                TRIAL.attach(reservation, job.job_id)
+                self.state.generation_jobs.append(job)
+                review = next((item for item in self.state.version_reviews if item.version_id == version_id), None)
                 if not review:
-                    STATE.version_reviews.append(VersionReview(
+                    self.state.version_reviews.append(VersionReview(
                         version_id=version_id,
-                        parent_version_id=None if version_id == "v1" else STATE.current_version_id,
+                        parent_version_id=None if version_id == "v1" else self.state.current_version_id,
                         status="generating",
                         compile_run_id=job.compile_run_id,
                         generation_contract_id=job.generation_contract_id,
@@ -291,17 +369,17 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     review.compile_run_id = job.compile_run_id
                     review.generation_contract_id = job.generation_contract_id
                     review.evaluation_contract_id = job.evaluation_contract_id
-                STATE.status = "generating_video"
-                STATE.history.append({
+                self.state.status = "generating_video"
+                self.state.history.append({
                     "at": "local-demo",
                     "phase": "act",
                     "event": "generation_submitted",
                     "payload": {
                         "message": (
                             f"Agent submitted {version_id} with {job.tool_name} as "
-                            f"{STATE.creative_spec.generation_spec.get('duration_seconds', 'planned')}s "
-                            f"{STATE.creative_spec.generation_spec.get('aspect_ratio', 'planned')} "
-                            f"at {STATE.creative_spec.generation_spec.get('quality_target', 'planned')} clarity."
+                            f"{self.state.creative_spec.generation_spec.get('duration_seconds', 'planned')}s "
+                            f"{self.state.creative_spec.generation_spec.get('aspect_ratio', 'planned')} "
+                            f"at {self.state.creative_spec.generation_spec.get('quality_target', 'planned')} clarity."
                         ),
                         "tool": job.tool_name,
                         "provider": job.provider_id,
@@ -309,9 +387,9 @@ class DemoHandler(SimpleHTTPRequestHandler):
                         "request_mode": job.request_mode,
                         "capability_profile": job.capability_profile_id,
                         "capability_notice": job.capability_notice,
-                        "generation_spec": STATE.creative_spec.generation_spec,
-                        "repair_scope": (STATE.latest_repair_task.execution_scope if repairing and STATE.latest_repair_task else "initial_generation"),
-                        "repair_scope_notice": (STATE.latest_repair_task.scope_notice if repairing and STATE.latest_repair_task else "Initial complete-clip generation."),
+                        "generation_spec": self.state.creative_spec.generation_spec,
+                        "repair_scope": (self.state.latest_repair_task.execution_scope if repairing and self.state.latest_repair_task else "initial_generation"),
+                        "repair_scope_notice": (self.state.latest_repair_task.scope_notice if repairing and self.state.latest_repair_task else "Initial complete-clip generation."),
                         "compile_run_id": job.compile_run_id,
                         "generation_contract_id": job.generation_contract_id,
                         "evaluation_contract_id": job.evaluation_contract_id,
@@ -319,11 +397,11 @@ class DemoHandler(SimpleHTTPRequestHandler):
                         "rejected": job.rejected_option,
                     },
                 })
-                return self._json(HTTPStatus.ACCEPTED, present(STATE))
+                return self._json(HTTPStatus.ACCEPTED, present(self.state))
             if path == "/api/refresh-generation":
-                if STATE.status != "generating_video" or not STATE.generation_jobs:
-                    return self._json(HTTPStatus.OK, present(STATE))
-                job = STATE.generation_jobs[-1]
+                if self.state.status != "generating_video" or not self.state.generation_jobs:
+                    return self._json(HTTPStatus.OK, present(self.state))
+                job = self.state.generation_jobs[-1]
                 try:
                     job = VIDEO_GENERATOR.refresh(job)
                 except ValueError as exc:
@@ -334,7 +412,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     job.error = str(exc)
                     if job.status not in {"queued", "running"}:
                         job.status = "queued"
-                    review = next((item for item in STATE.version_reviews if item.version_id == job.version_id), None)
+                    review = next((item for item in self.state.version_reviews if item.version_id == job.version_id), None)
                     if review:
                         review.status = "generating"
                         review.observation_error = job.error
@@ -342,19 +420,24 @@ class DemoHandler(SimpleHTTPRequestHandler):
                         "autopilot_paused_for_generation_status_error",
                         "Agent autonomy paused because the provider task status could not be verified. The existing task is retained; no duplicate generation will be submitted until the user resumes it.",
                     )
-                    STATE.history.append({
+                    self.state.history.append({
                         "at": "local-demo",
                         "phase": "act",
                         "event": "generation_status_unavailable",
                         "payload": {"message": job.error},
                     })
-                    return self._json(HTTPStatus.OK, present(STATE))
-                review = next((item for item in STATE.version_reviews if item.version_id == job.version_id), None)
+                    return self._json(HTTPStatus.OK, present(self.state))
+                review = next((item for item in self.state.version_reviews if item.version_id == job.version_id), None)
                 if job.status in {"queued", "running"}:
                     if review:
                         review.status = "generating"
-                    return self._json(HTTPStatus.OK, present(STATE))
+                    return self._json(HTTPStatus.OK, present(self.state))
                 if job.status == "succeeded":
+                    used = TRIAL.settle(self.visitor_id, job.job_id, True)
+                    remaining = TRIAL.status(self.visitor_id)["remaining_seconds"]
+                    self.trial_notice = f"视频已生成，本次使用 {used:g} 秒，剩余视频额度 {remaining:g} 秒。"
+                    if remaining == 0:
+                        self.trial_notice += "体验码的视频额度已用完，感谢体验。你仍可查看已生成的视频和演示案例。"
                     if not job.output_video_url:
                         job.status = "failed"
                         job.error = "The video provider completed the task without a downloadable video URL"
@@ -365,8 +448,8 @@ class DemoHandler(SimpleHTTPRequestHandler):
                         job.status = "failed"
                         job.error = str(exc)
                         return self._generation_failed(job, review)
-                    STATE.current_version_id = job.version_id
-                    STATE.current_video_asset = {
+                    self.state.current_version_id = job.version_id
+                    self.state.current_video_asset = {
                         "name": f"Agent generated {job.version_id.upper()}",
                         "mime_type": "video/mp4",
                         "size": str(size),
@@ -376,10 +459,10 @@ class DemoHandler(SimpleHTTPRequestHandler):
                         "frame_count": "0",
                     }
                     if review:
-                        review.asset = STATE.current_video_asset.copy()
+                        review.asset = self.state.current_video_asset.copy()
                         review.status = "sampling_evidence"
-                    STATE.status = "generated_video_ready"
-                    STATE.history.append({
+                    self.state.status = "generated_video_ready"
+                    self.state.history.append({
                         "at": "local-demo",
                         "phase": "act",
                         "event": "generation_completed",
@@ -387,70 +470,70 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     })
                 else:
                     return self._generation_failed(job, review)
-                return self._json(HTTPStatus.OK, present(STATE))
+                return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/register-generated-video":
-                if STATE.status != "generated_video_ready" or not STATE.current_video_asset:
+                if self.state.status != "generated_video_ready" or not self.state.current_video_asset:
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "A completed generated video is required before preparing evidence"})
                 payload = self._read_json()
                 frame_records = self._store_evaluation_frames(payload.get("frames"))
-                self._discard_evaluation_frames(STATE.evaluation_frame_records)
-                STATE.evaluation_frame_records = frame_records
-                STATE.current_video_asset["frame_count"] = str(len(frame_records))
-                STATE.current_video_asset["poster_data_url"] = self._poster_data_url(frame_records[0])
-                review = next((item for item in STATE.version_reviews if item.version_id == STATE.current_version_id), None)
+                self._discard_evaluation_frames(self.state.evaluation_frame_records)
+                self.state.evaluation_frame_records = frame_records
+                self.state.current_video_asset["frame_count"] = str(len(frame_records))
+                self.state.current_video_asset["poster_data_url"] = self._poster_data_url(frame_records[0])
+                review = next((item for item in self.state.version_reviews if item.version_id == self.state.current_version_id), None)
                 if review:
-                    review.asset = STATE.current_video_asset.copy()
+                    review.asset = self.state.current_video_asset.copy()
                     review.status = "awaiting_evaluation"
-                STATE.status = "repair_uploaded" if STATE.current_version_id != "v1" else "ready_for_evaluation"
-                STATE.history.append({
+                self.state.status = "repair_uploaded" if self.state.current_version_id != "v1" else "ready_for_evaluation"
+                self.state.history.append({
                     "at": "local-demo",
                     "phase": "observe",
                     "event": "generated_video_evidence_ready",
-                    "payload": {"message": f"Agent sampled {len(frame_records)} risk-aware evidence frames for {STATE.current_version_id}."},
+                    "payload": {"message": f"Agent sampled {len(frame_records)} risk-aware evidence frames for {self.state.current_version_id}."},
                 })
-                return self._json(HTTPStatus.OK, present(STATE))
+                return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/update-budget":
                 editable_statuses = {"planning_ready", "awaiting_first_video", "generating_video", "generated_video_ready", "ready_for_evaluation", "awaiting_repair_upload", "repair_uploaded", "stopped_budget_exhausted", "published", "generation_failed"}
-                if STATE.status not in editable_statuses:
+                if self.state.status not in editable_statuses:
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "The repair budget can no longer be changed for this project"})
                 payload = self._read_json()
-                budget = int(payload.get("max_iterations", STATE.creative_spec.max_iterations))
-                if budget < STATE.iterations_used or budget > MAX_REPAIR_ITERATIONS:
-                    return self._json(HTTPStatus.BAD_REQUEST, {"error": f"The repair budget must be between {STATE.iterations_used} and {MAX_REPAIR_ITERATIONS} because {STATE.iterations_used} iteration(s) have already been used"})
-                previous_budget = STATE.creative_spec.max_iterations
-                STATE.creative_spec.max_iterations = budget
+                budget = int(payload.get("max_iterations", self.state.creative_spec.max_iterations))
+                if budget < self.state.iterations_used or budget > MAX_REPAIR_ITERATIONS:
+                    return self._json(HTTPStatus.BAD_REQUEST, {"error": f"The repair budget must be between {self.state.iterations_used} and {MAX_REPAIR_ITERATIONS} because {self.state.iterations_used} iteration(s) have already been used"})
+                previous_budget = self.state.creative_spec.max_iterations
+                self.state.creative_spec.max_iterations = budget
                 if budget != previous_budget:
-                    STATE.history.append({
+                    self.state.history.append({
                         "at": "local-demo",
                         "phase": "human_approval",
                         "event": "repair_budget_updated",
                         "payload": {"message": f"User changed the repair budget from {previous_budget} to {budget} iteration(s)."},
                     })
-                    if STATE.execution_mode == "autopilot" and not STATE.autopilot_paused:
-                        STATE.autopilot_paused = True
-                        STATE.history.append({
+                    if self.state.execution_mode == "autopilot" and not self.state.autopilot_paused:
+                        self.state.autopilot_paused = True
+                        self.state.history.append({
                             "at": "local-demo",
                             "phase": "human_approval",
                             "event": "autopilot_paused_for_budget_change",
                             "payload": {"message": "Agent autonomy paused after the user changed the repair budget. Resume explicitly to continue from the current step."},
                         })
-                if STATE.status == "stopped_budget_exhausted" and budget > STATE.iterations_used:
-                    ORCHESTRATOR.resume_after_human_approval(STATE)
-                return self._json(HTTPStatus.OK, present(STATE))
+                if self.state.status == "stopped_budget_exhausted" and budget > self.state.iterations_used:
+                    ORCHESTRATOR.resume_after_human_approval(self.state)
+                return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/continue-optimization":
-                ORCHESTRATOR.prepare_optional_iteration(STATE)
-                return self._json(HTTPStatus.OK, present(STATE))
+                ORCHESTRATOR.prepare_optional_iteration(self.state)
+                return self._json(HTTPStatus.OK, present(self.state))
             if path in {"/api/upload-first-video", "/api/replace-first-video"}:
                 replacing = path == "/api/replace-first-video"
                 expected_status = "ready_for_evaluation" if replacing else "awaiting_first_video"
-                if STATE.status != expected_status:
+                if self.state.status != expected_status:
                     message = "Only a V1 awaiting evaluation can be replaced" if replacing else "Approve a control plan before adding the first video"
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": message})
                 payload = self._read_json()
                 name, mime_type, size, frame_records = self._prepare_video_upload(payload)
                 if replacing:
-                    self._discard_evaluation_frames(STATE.evaluation_frame_records)
-                STATE.current_video_asset = {
+                    self._discard_evaluation_frames(self.state.evaluation_frame_records)
+                self.state.current_video_asset = {
                     "name": name,
                     "mime_type": mime_type,
                     "size": str(size),
@@ -458,53 +541,53 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     "frame_count": str(len(frame_records)),
                     "poster_data_url": self._poster_data_url(frame_records[0]),
                 }
-                STATE.evaluation_frame_records = frame_records
-                STATE.current_version_id = "v1"
-                existing_review = next((item for item in STATE.version_reviews if item.version_id == "v1"), None)
+                self.state.evaluation_frame_records = frame_records
+                self.state.current_version_id = "v1"
+                existing_review = next((item for item in self.state.version_reviews if item.version_id == "v1"), None)
                 if existing_review:
-                    existing_review.asset = STATE.current_video_asset.copy()
+                    existing_review.asset = self.state.current_video_asset.copy()
                     existing_review.status = "awaiting_evaluation"
                     existing_review.observation_error = ""
                 else:
-                    STATE.version_reviews.append(VersionReview(
+                    self.state.version_reviews.append(VersionReview(
                         version_id="v1",
                         parent_version_id=None,
-                        asset=STATE.current_video_asset.copy(),
+                        asset=self.state.current_video_asset.copy(),
                     ))
-                STATE.status = "ready_for_evaluation"
-                STATE.history.append({
+                self.state.status = "ready_for_evaluation"
+                self.state.history.append({
                     "at": "local-demo",
                     "phase": "act",
                     "event": "first_video_replaced" if replacing else "first_video_added",
                     "payload": {"message": f"User {'replaced' if replacing else 'added'} {name} as version v1 for quality evaluation."},
                 })
-                return self._json(HTTPStatus.OK, present(STATE))
+                return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/remove-first-video":
-                if STATE.status != "ready_for_evaluation":
+                if self.state.status != "ready_for_evaluation":
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "A V1 can be removed only before quality evaluation starts"})
-                self._discard_evaluation_frames(STATE.evaluation_frame_records)
-                removed_name = (STATE.current_video_asset or {}).get("name", "V1")
-                STATE.current_video_asset = None
-                STATE.evaluation_frame_records = []
-                STATE.current_version_id = "none"
-                STATE.version_reviews = [item for item in STATE.version_reviews if item.version_id != "v1"]
-                STATE.status = "awaiting_first_video"
-                STATE.history.append({
+                self._discard_evaluation_frames(self.state.evaluation_frame_records)
+                removed_name = (self.state.current_video_asset or {}).get("name", "V1")
+                self.state.current_video_asset = None
+                self.state.evaluation_frame_records = []
+                self.state.current_version_id = "none"
+                self.state.version_reviews = [item for item in self.state.version_reviews if item.version_id != "v1"]
+                self.state.status = "awaiting_first_video"
+                self.state.history.append({
                     "at": "local-demo",
                     "phase": "act",
                     "event": "first_video_removed",
                     "payload": {"message": f"User removed {removed_name} before quality evaluation."},
                 })
-                return self._json(HTTPStatus.OK, present(STATE))
+                return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/upload-repaired-video":
-                if STATE.status != "awaiting_repair_upload" or not STATE.latest_repair_task:
+                if self.state.status != "awaiting_repair_upload" or not self.state.latest_repair_task:
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "A repaired video can be added only after the Agent creates a repair task"})
                 payload = self._read_json()
                 name, mime_type, size, frame_records = self._prepare_video_upload(payload)
-                self._discard_evaluation_frames(STATE.evaluation_frame_records)
-                parent_version = STATE.current_version_id
+                self._discard_evaluation_frames(self.state.evaluation_frame_records)
+                parent_version = self.state.current_version_id
                 next_version = self._next_version_id(parent_version)
-                STATE.current_video_asset = {
+                self.state.current_video_asset = {
                     "name": name,
                     "mime_type": mime_type,
                     "size": str(size),
@@ -512,41 +595,66 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     "frame_count": str(len(frame_records)),
                     "poster_data_url": self._poster_data_url(frame_records[0]),
                 }
-                STATE.evaluation_frame_records = frame_records
-                STATE.current_version_id = next_version
-                STATE.version_reviews.append(VersionReview(
+                self.state.evaluation_frame_records = frame_records
+                self.state.current_version_id = next_version
+                self.state.version_reviews.append(VersionReview(
                     version_id=next_version,
                     parent_version_id=parent_version,
-                    asset=STATE.current_video_asset.copy(),
+                    asset=self.state.current_video_asset.copy(),
                 ))
-                STATE.status = "repair_uploaded"
-                STATE.history.append({
+                self.state.status = "repair_uploaded"
+                self.state.history.append({
                     "at": "local-demo",
                     "phase": "act",
                     "event": "repair_video_added",
                     "payload": {"message": f"User added {name} as {next_version} for verification."},
                 })
-                return self._json(HTTPStatus.OK, present(STATE))
+                return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/run-loop":
-                if STATE.status not in {"ready_for_evaluation", "repair_uploaded"}:
+                if self.state.status not in {"ready_for_evaluation", "repair_uploaded"}:
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "Upload or generate a first video version before evaluation"})
-                ORCHESTRATOR.run_once(STATE)
-                return self._json(HTTPStatus.OK, present(STATE))
+                ORCHESTRATOR.run_once(self.state)
+                return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/simulate-repair":
-                ORCHESTRATOR.simulate_repaired_upload(STATE)
-                return self._json(HTTPStatus.OK, present(STATE))
+                ORCHESTRATOR.simulate_repaired_upload(self.state)
+                return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/reset":
-                STATE = create_empty_state()
-                return self._json(HTTPStatus.OK, present(STATE))
+                self.state = create_empty_state()
+                return self._json(HTTPStatus.OK, present(self.state))
             return self._json(HTTPStatus.NOT_FOUND, {"error": "Unknown endpoint"})
+        except AccessError as exc:
+            if exc.code in {"quota_exhausted", "submission_uncertain", "ai_limit"}:
+                self.state.autopilot_paused = True
+            return self._json(exc.status, {"error": str(exc), "code": exc.code})
         except ValueError as exc:
             return self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+
+    def _client_ip(self):
+        # Only enable behind a proxy that overwrites this header; app port must
+        # remain private. Compose's Caddy configuration does both.
+        if os.getenv("TRUST_PROXY") == "1":
+            return self.headers.get("X-Trial-Client-IP", self.client_address[0])
+        return self.client_address[0]
+
+    def end_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "same-origin")
+        if hasattr(self, "visitor_cookie"):
+            secure = "; Secure" if os.getenv("COOKIE_SECURE") == "1" else ""
+            self.send_header("Set-Cookie", f"trial_visitor={self.visitor_cookie}; Path=/; HttpOnly; SameSite=Lax; Max-Age=315360000{secure}")
+            self.send_header("Cache-Control", "no-store")
+        super().end_headers()
 
     def log_message(self, format, *args):
         # Keep terminal output compact for a live demo.
         return
 
     def _json(self, status: HTTPStatus, data: dict):
+        if hasattr(self, "visitor_id"):
+            TRIAL.save(self.visitor_id, self.state)
+            data["trial"] = TRIAL.status(self.visitor_id)
+            if getattr(self, "trial_notice", None):
+                data["trial_notice"] = self.trial_notice
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -555,7 +663,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def _serve_generated_video(self, version_id: str):
-        review = next((item for item in STATE.version_reviews if item.version_id == version_id), None)
+        review = next((item for item in self.state.version_reviews if item.version_id == version_id), None)
         asset = review.asset if review else None
         raw_path = (asset or {}).get("local_video_path")
         if not isinstance(raw_path, str):
@@ -578,20 +686,22 @@ class DemoHandler(SimpleHTTPRequestHandler):
 
     def _read_json(self) -> dict:
         content_length = int(self.headers.get("Content-Length", "0"))
-        if content_length > MAX_REQUEST_BYTES:
+        if content_length < 0 or content_length > MAX_REQUEST_BYTES:
             raise ValueError("This request contains too much reference media. Please use smaller images or shorter audio files.")
         raw = self.rfile.read(content_length) if content_length else b"{}"
         try:
-            return json.loads(raw.decode("utf-8"))
+            result = json.loads(raw.decode("utf-8"))
+            if not isinstance(result, dict):
+                raise ValueError("JSON body must be an object")
+            return result
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ValueError("Invalid JSON request body") from exc
 
-    @staticmethod
-    def _pause_autopilot_for_failure(event: str, message: str) -> None:
-        if STATE.execution_mode != "autopilot" or STATE.autopilot_paused:
+    def _pause_autopilot_for_failure(self, event: str, message: str) -> None:
+        if self.state.execution_mode != "autopilot" or self.state.autopilot_paused:
             return
-        STATE.autopilot_paused = True
-        STATE.history.append({
+        self.state.autopilot_paused = True
+        self.state.history.append({
             "at": "local-demo",
             "phase": "human_approval",
             "event": event,
@@ -600,7 +710,12 @@ class DemoHandler(SimpleHTTPRequestHandler):
 
     def _generation_failed(self, job, review):
         """End a failed local handoff without silently resubmitting a paid job."""
-        STATE.status = "awaiting_repair_upload" if job.version_id != "v1" else "awaiting_first_video"
+        # A local download failure after provider success is still a used generation.
+        if job.status in {"failed", "canceled", "cancelled"}:
+            released = TRIAL.settle(self.visitor_id, job.job_id, False)
+            remaining = TRIAL.status(self.visitor_id)["remaining_seconds"]
+            self.trial_notice = (f"视频生成失败，本次未扣除额度，剩余视频额度 {remaining:g} 秒。" if released else f"视频已生成，但暂时无法获取文件，剩余视频额度 {remaining:g} 秒。")
+        self.state.status = "awaiting_repair_upload" if job.version_id != "v1" else "awaiting_first_video"
         error = job.error or "Video generation failed or was canceled."
         if review:
             review.status = "generation_failed"
@@ -609,13 +724,13 @@ class DemoHandler(SimpleHTTPRequestHandler):
             "autopilot_paused_for_generation_failure",
             "Agent autonomy paused because the video provider did not complete the current task. No replacement generation will be submitted until the user explicitly resumes it.",
         )
-        STATE.history.append({
+        self.state.history.append({
             "at": "local-demo",
             "phase": "act",
             "event": "generation_failed",
             "payload": {"message": error},
         })
-        return self._json(HTTPStatus.OK, present(STATE))
+        return self._json(HTTPStatus.OK, present(self.state))
 
     @staticmethod
     def _normalise_multimodal_assets(payload: dict) -> list[dict[str, str]]:
@@ -757,7 +872,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 raise ValueError("Sampled keyframes must be JPEG images")
             if not isinstance(timestamp, (int, float)) or timestamp < 0:
                 raise ValueError("Invalid keyframe timestamp")
-            planned_shot_ids = {str(shot.get("shot_id")) for shot in STATE.creative_spec.shots if isinstance(shot, dict)}
+            planned_shot_ids = {str(shot.get("shot_id")) for shot in self.state.creative_spec.shots if isinstance(shot, dict)}
             if expected_shot_id not in planned_shot_ids:
                 raise ValueError("Each evidence frame must identify its planned shot")
             if not isinstance(sampling_reason, str) or not sampling_reason.strip() or len(sampling_reason.strip()) > 240:
@@ -804,8 +919,13 @@ class DemoHandler(SimpleHTTPRequestHandler):
             shutil.rmtree(directory)
 
 
-def run(port: int = 8000):
-    server = ThreadingHTTPServer(("127.0.0.1", port), DemoHandler)
+def run(port: int | None = None):
+    codes = os.getenv("TRIAL_CODES", "").split(",")
+    if any(code.strip() and (len(code.strip()) != 4 or not code.strip().isascii() or not code.strip().isdigit()) for code in codes):
+        raise ValueError("TRIAL_CODES must contain four-digit codes")
+    port = port or int(os.getenv("PORT", "8000"))
+    host = os.getenv("HOST", "127.0.0.1")
+    server = ThreadingHTTPServer((host, port), DemoHandler)
     print(f"Video Control Loop Agent running at http://127.0.0.1:{port}")
     try:
         server.serve_forever()
