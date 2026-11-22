@@ -120,3 +120,7 @@ Doubao Seed 2.1 Pro（`doubao-seed-2-1-pro-260915`）负责需求理解、规划
 ## 视频模型推荐
 
 Seedance 2.5、Seedance 2.0 与 MiniMax H3 已接入模型卡片与运行时选型 Skill。`VIDEO_PROVIDER=auto` 时，Doubao 推荐兼容候选，用户确认后生成。H3 仅在明确低预算目标下参与推荐。参考视频使用公开 HTTPS 链接；详见 [模型路由与能力边界](docs/model-routing.md)。
+
+## 画布工作区
+
+[本地画布与全局创作 Agent](docs/canvas.md)：节点编辑、参考连线、自动保存，并复用现有生成和质检流程。

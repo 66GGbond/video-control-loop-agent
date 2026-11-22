@@ -175,6 +175,8 @@ class DemoHandler(SimpleHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/state":
             return self._json(HTTPStatus.OK, present(self.state))
+        if path == "/api/canvas":
+            return self._json(HTTPStatus.OK, SESSIONS.load_canvas(self.visitor_id))
         if path.startswith("/api/generated-video/"):
             return self._serve_generated_video(path.rsplit("/", 1)[-1])
         return super().do_GET()
@@ -183,6 +185,22 @@ class DemoHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         try:
+            if path == "/api/canvas":
+                from .canvas import validate_canvas
+                payload = self._read_json()
+                document = validate_canvas(payload.get("document"), self._normalise_multimodal_assets)
+                revision = SESSIONS.save_canvas(self.visitor_id, payload.get("revision"), document)
+                if revision is None:
+                    return self._json(HTTPStatus.CONFLICT, {"error": "Canvas changed in another tab. Export your draft before reloading."})
+                return self._json(HTTPStatus.OK, {"revision": revision})
+            if path == "/api/canvas-reference":
+                payload = self._read_json()
+                assets = self.state.creative_spec.multimodal_assets
+                index = payload.get("index")
+                if payload.get("project_id") != self.state.project_id or isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(assets):
+                    raise ValueError("Project reference is no longer available")
+                asset = assets[index]
+                return self._json(HTTPStatus.OK, {"asset": self._normalise_multimodal_assets({"multimodal_assets": [{**asset, "data_url": asset.get("data_url") or asset.get("preview_data_url")}]})[0]})
             if path in {"/api/recommend-video-model", "/api/confirm-video-model"}:
                 from .agent.model_router import recommend, confirm
                 if os.getenv("VIDEO_PROVIDER") != "auto":

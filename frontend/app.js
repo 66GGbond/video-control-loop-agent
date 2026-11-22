@@ -1383,6 +1383,7 @@ function render(state) {
   }
   renderVersionNavigator(state);
   if (EVALUATION_STATES.has(state.status)) renderEvaluation(state);
+  window.dispatchEvent(new CustomEvent("vclstatechange", {detail:state}));
 }
 
 async function refresh() {
@@ -1559,15 +1560,23 @@ document.querySelector("#confirm-context").addEventListener("click", async () =>
     button.textContent = "Continue planning";
   }
 });
-document.querySelector("#creative-agent-minimize").addEventListener("click", () => {
-  document.querySelector("#creative-agent").classList.add("collapsed");
-  document.querySelector("#creative-agent-toggle").hidden = false;
+function setCreativeAgentOpen(open, focus = false) {
+  const panel=document.querySelector("#creative-agent"), capsule=document.querySelector("#creative-agent-toggle");
+  if (panel.classList.contains("collapsed") === open) panel.classList.toggle("collapsed", !open);
+  panel.inert=!open;
+  document.body.classList.toggle("agent-open", open);
+  capsule.hidden=false;
+  capsule.setAttribute("aria-expanded", String(open));
+  capsule.setAttribute("aria-label", open ? "Minimize Creative Agent" : "Open Creative Agent");
+  if (focus && open) requestAnimationFrame(()=>promptEditor().focus());
+}
+document.querySelector("#creative-agent-minimize").addEventListener("click",()=>{
+  setCreativeAgentOpen(false);
+  document.querySelector("#creative-agent-toggle").focus();
 });
-document.querySelector("#creative-agent-toggle").addEventListener("click", () => {
-  document.querySelector("#creative-agent").classList.remove("collapsed");
-  document.querySelector("#creative-agent-toggle").hidden = true;
-  requestAnimationFrame(() => document.querySelector("#creative-prompt").focus());
-});
+document.querySelector("#creative-agent-toggle").addEventListener("click",()=>setCreativeAgentOpen(document.querySelector("#creative-agent").classList.contains("collapsed"),true));
+new MutationObserver(()=>setCreativeAgentOpen(!document.querySelector("#creative-agent").classList.contains("collapsed"))).observe(document.querySelector("#creative-agent"),{attributes:true,attributeFilter:["class"]});
+setCreativeAgentOpen(false);
 function currentBudgetValue() {
   return clampBudget(Number(document.querySelector("#budget-value").textContent));
 }
@@ -1709,7 +1718,7 @@ document.querySelector("#generate-video").addEventListener("click", generateVide
 document.querySelector("#generate-repair").addEventListener("click", event => {
   if (event.currentTarget.dataset.mode === "request_budget") {
     document.querySelector("#creative-agent").classList.remove("collapsed");
-    document.querySelector("#creative-agent-toggle").hidden = true;
+
     render(renderedState);
     requestAnimationFrame(() => {
       document.querySelector("#repair-budget-control").classList.add("needs-approval");
@@ -1738,7 +1747,7 @@ document.querySelector("#reset").addEventListener("click", async () => {
     setEditorText("");
     document.querySelector("#target-market").value = "";
     document.querySelector("#creative-agent").classList.remove("collapsed");
-    document.querySelector("#creative-agent-toggle").hidden = true;
+
     render(await endpoint("/api/reset", { method: "POST" }));
   } catch (error) { I18n.alert(error.message); }
 });
@@ -1748,7 +1757,7 @@ const compactLayout = window.matchMedia("(max-width: 1259px)");
 function collapseCompactAgent() {
   if (!compactLayout.matches) return;
   document.querySelector("#creative-agent").classList.add("collapsed");
-  document.querySelector("#creative-agent-toggle").hidden = false;
+
 }
 compactLayout.addEventListener("change", collapseCompactAgent);
 collapseCompactAgent();
@@ -1774,3 +1783,34 @@ document.querySelector("#add-reference-video").addEventListener("click", () => {
     renderReferenceAttachments();input.value="";
   }catch(error){I18n.alert(error.message);}
 });
+
+// Canvas hands a reviewable draft to the same composer; it never calls a paid provider.
+window.VCLBridge = {
+  state:()=>renderedState,
+  open:()=>setCreativeAgentOpen(true,true),
+  readMedia:async file=>isImageReference(file)?readReferenceFile(file):readAudioReferenceFile(file),
+  async stage({text,assets}) {
+    if(renderedState?.status==='generating_video') throw new Error('Wait for the current video before changing references.');
+    if(renderedState?.status!=='ready_for_brief' && assets.length) throw new Error('This project already has references. Start a new project to use different canvas references.');
+    const names=new Set(selectedReferenceItems.map(file=>file.name.toLowerCase()));
+    const additions=[];
+    for(const asset of assets) {
+      if(names.has(asset.name.toLowerCase())) throw new Error('Reference filenames must be unique.');
+      names.add(asset.name.toLowerCase());
+      if(asset.media_type==='video') additions.push({name:asset.name,type:asset.mime_type,size:0,lastModified:0,reference_url:asset.url,duration_seconds:asset.duration_seconds});
+      else {
+        const value=asset.data_url||asset.preview_data_url;
+        if(!value?.startsWith(asset.media_type==='image'?'data:image/':'data:audio/')) throw new Error('Reference media is unavailable.');
+        const blob=await (await fetch(value)).blob();
+        additions.push(new File([blob],asset.name,{type:asset.mime_type,lastModified:0}));
+      }
+    }
+    const all=[...selectedReferenceItems,...additions];
+    if(all.filter(isImageReference).length>30 || all.filter(isAudioReference).length>10 || all.filter(isVideoReference).length>10) throw new Error('Too many references for one brief.');
+    selectedReferenceItems=all;
+    const existing=editorText().trim();
+    setEditorText(existing?existing+'\n\n'+text:text);
+    renderReferenceAttachments();
+    setCreativeAgentOpen(true,true);
+  }
+};

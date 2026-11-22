@@ -53,6 +53,7 @@ class SessionStore:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS visitors (id TEXT PRIMARY KEY, state TEXT);
+                CREATE TABLE IF NOT EXISTS canvases (visitor_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, document TEXT NOT NULL);
             """)
             db.execute("INSERT OR IGNORE INTO settings VALUES ('secret',?)", (secrets.token_hex(32),))
             self.secret = db.execute("SELECT value FROM settings WHERE key='secret'").fetchone()[0].encode()
@@ -88,3 +89,19 @@ class SessionStore:
     def save(self, visitor, state):
         with self.connect() as db:
             db.execute("UPDATE visitors SET state=? WHERE id=?", (json.dumps(encode(state), ensure_ascii=False), visitor))
+
+    def load_canvas(self, visitor):
+        from .canvas import empty_canvas
+        with self.connect() as db:
+            row = db.execute("SELECT revision,document FROM canvases WHERE visitor_id=?", (visitor,)).fetchone()
+        return {"revision": row[0], "document": json.loads(row[1])} if row else {"revision": 0, "document": empty_canvas()}
+
+    def save_canvas(self, visitor, revision, document):
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT revision FROM canvases WHERE visitor_id=?", (visitor,)).fetchone()
+            current = row[0] if row else 0
+            if isinstance(revision, bool) or not isinstance(revision, int) or revision != current:
+                return None
+            db.execute("INSERT OR REPLACE INTO canvases VALUES (?,?,?)", (visitor, current + 1, json.dumps(document, ensure_ascii=False)))
+        return current + 1
