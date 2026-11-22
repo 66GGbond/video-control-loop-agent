@@ -1256,7 +1256,6 @@ function render(state) {
     return;
   }
 
-  document.querySelector("#goal").textContent = spec.goal;
   const usedLivePlanner = spec.planning_source === "doubao_seed_2_1_pro";
   document.querySelector("#planning-source").textContent = usedLivePlanner ? "Doubao Seed 2.1 Pro plan" : ["fixture", "fallback"].includes(spec.planning_source) ? "Deterministic fallback" : "Archived model plan";
   const samplingFocus = (spec.evidence_sampling?.focus_shot_ids || []).join(" · ");
@@ -1264,9 +1263,6 @@ function render(state) {
   document.querySelector("#plan-summary-text").textContent = samplingFocus
     ? `${planningSummary} Evidence sampling will focus on ${samplingFocus}.`
     : planningSummary;
-  const recommendedIterations = Number.isInteger(spec.recommended_iterations) ? spec.recommended_iterations : spec.max_iterations;
-  document.querySelector("#budget").textContent = `${recommendedIterations} recommended`;
-  document.querySelector("#version").textContent = state.current_version_id === "none" ? "Not generated" : state.current_version_id.toUpperCase();
   renderPlanLanguage(spec);
   const direction = spec.production_direction || {};
   const directionItems = [
