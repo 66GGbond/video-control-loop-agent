@@ -51,7 +51,7 @@ def load_local_env(path: Path) -> None:
         key, value = line.split("=", 1)
         key = key.strip()
         if key in {
-            "ARK_API_KEY", "ARK_MODEL",
+            "ARK_API_KEY", "ARK_MODEL", "SEEDANCE_25_API_KEY", "SEEDANCE_20_API_KEY",
             "ARK_VIDEO_TEXT_MODEL", "ARK_VIDEO_REFERENCE_MODEL", "VIDEO_PROVIDER",
             "MINIMAX_API_KEY", "MINIMAX_VIDEO_MODEL", "MINIMAX_VIDEO_RESOLUTION", "MINIMAX_API_BASE_URL",
             "PORT",
@@ -183,6 +183,20 @@ class DemoHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         try:
+            if path in {"/api/recommend-video-model", "/api/confirm-video-model"}:
+                from .agent.model_router import recommend, confirm
+                if os.getenv("VIDEO_PROVIDER") != "auto":
+                    raise ValueError("Multi-model routing is not enabled")
+                if self.state.status not in {"planning_ready", "awaiting_first_video", "awaiting_repair_upload"}:
+                    raise ValueError("当前阶段不能更改视频生成模型。")
+                if path == "/api/recommend-video-model":
+                    recommend(self.state)
+                else:
+                    payload = self._read_json()
+                    card = confirm(self.state, payload.get("model_id"), payload.get("fingerprint"))
+                    PROMPT_COMPILER.compile(self.state, self.state.latest_repair_task, "v1" if self.state.current_version_id == "none" else self._next_version_id(self.state.current_version_id))
+                    self.state.history.append({"at":"local-demo", "phase":"human_approval", "event":"video_model_confirmed", "payload":{"model_id":card["model_id"], "warnings":card["warnings"]}})
+                return self._json(HTTPStatus.OK, present(self.state))
             if path in {"/api/create-project", "/api/reset"} and self.state.status == "generating_video":
                 return self._json(HTTPStatus.CONFLICT, {"error": "A video is being generated. Please wait for the result."})
             if path == "/api/create-project":
@@ -685,10 +699,11 @@ class DemoHandler(SimpleHTTPRequestHandler):
             raw_assets = [legacy] if legacy else []
         if not isinstance(raw_assets, list):
             raise ValueError("Reference assets must be a list")
-        if len(raw_assets) > 12:
-            raise ValueError("Use at most 9 reference images and 3 audio files in this local demo")
+        if len(raw_assets) > 50:
+            raise ValueError("Use at most 30 images, 10 audio files and 10 video URLs")
         images = 0
         audio = 0
+        videos = 0
         normalised: list[dict[str, str]] = []
         seen_names: set[str] = set()
         for input_order, raw in enumerate(raw_assets, start=1):
@@ -708,8 +723,8 @@ class DemoHandler(SimpleHTTPRequestHandler):
             prompt_mentions = [str(item).strip()[:140] for item in raw_mentions if str(item).strip()][:3]
             if mime_type.startswith("image/") and isinstance(data_url, str) and data_url.startswith("data:image/"):
                 images += 1
-                if images > 9:
-                    raise ValueError("Use at most 9 reference images in this local demo")
+                if images > 30:
+                    raise ValueError("Use at most 30 reference images in this local demo")
                 if len(data_url) > 2_000_000:
                     raise ValueError("Each reference image must be under 1.5 MB after browser compression")
                 normalised.append({
@@ -720,8 +735,8 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 })
             elif mime_type in {"audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav"} and isinstance(data_url, str) and data_url.startswith("data:audio/"):
                 audio += 1
-                if audio > 3:
-                    raise ValueError("Use at most 3 reference audio files in this local demo")
+                if audio > 10:
+                    raise ValueError("Use at most 10 reference audio files in this local demo")
                 try:
                     raw_size = int(raw.get("size", 0))
                 except (TypeError, ValueError) as exc:
@@ -739,8 +754,8 @@ class DemoHandler(SimpleHTTPRequestHandler):
                         duration_seconds = round(float(raw_duration), 2)
                     except (TypeError, ValueError) as exc:
                         raise ValueError("Audio reference duration is invalid") from exc
-                    if not 2 <= duration_seconds <= 15:
-                        raise ValueError("Each MiniMax H3 audio reference must be 2–15 seconds")
+                    if not 2 <= duration_seconds <= 30:
+                        raise ValueError("Audio references must be 2–30 seconds; compatible models are filtered later")
                 normalised.append({
                     "name": name or "reference audio", "mime_type": mime_type,
                     "size": str(raw.get("size", 0)), "role": role or "Audio reference",
@@ -748,8 +763,17 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     "prompt_mentions": prompt_mentions, "input_order": input_order,
                     **({"duration_seconds": duration_seconds} if duration_seconds is not None else {}),
                 })
+            elif mime_type in {"video/mp4", "video/quicktime"}:
+                videos += 1
+                url = str(raw.get("url", ""))
+                parsed = urlparse(url)
+                duration = float(raw.get("duration_seconds", 0))
+                if videos > 10 or parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or not 2 <= duration <= 30:
+                    raise ValueError("参考视频需提供有效 HTTPS 链接和 2–30 秒时长；最多 10 个。")
+                normalised.append({"name":name, "mime_type":mime_type, "media_type":"video", "url":url,
+                                   "duration_seconds":duration, "size":"0", "role":"reference_video", "prompt_mentions":prompt_mentions, "input_order":input_order})
             else:
-                raise ValueError("Reference assets must be PNG/JPEG/WebP images or MP3/WAV audio")
+                raise ValueError("Reference assets must be images, MP3/WAV audio or public MP4/MOV URLs")
         return normalised
 
     def _prepare_video_upload(self, payload: dict) -> tuple[str, str, int, list[dict[str, object]]]:

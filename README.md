@@ -73,7 +73,7 @@ A version is publishable only when:
 
 The Agent control loop is separated from video-provider adapters. Planning, Quality Rubric, version memory, budget policy, and repair logic do not depend on a model ID. A new provider is added by declaring and validating its capabilities.
 
-The current Seedance 1.0 Pro adapter is `test_only`, not a product recommendation. It never receives reference-image pixels by assumption. The project also includes an asynchronous adapter for MiniMax H3 V2. It uses the documented multimodal `content` array: text plus user attachments in order—up to nine `reference_image` items and three `reference_audio` items in this MVP. Multimodal references are not misrepresented as first-frame inputs and are never mixed with first/last-frame modes.
+The active video catalogue includes Seedance 2.5, Seedance 2.0 and MiniMax H3. The Agent screens declared capabilities, recommends a model and waits for user confirmation. Legacy adapter files do not enter the auto-selection catalogue.
 
 ## Run locally
 
@@ -86,7 +86,7 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Optional local configuratio
 To enable MiniMax H3, add the following to `.env`:
 
 ```dotenv
-VIDEO_PROVIDER=minimax_h3
+VIDEO_PROVIDER=auto
 MINIMAX_API_KEY=your_MiniMax_API_key
 MINIMAX_VIDEO_MODEL=MiniMax-H3
 MINIMAX_VIDEO_RESOLUTION=768P
@@ -114,4 +114,8 @@ Run `python3 run_demo.py` and open http://127.0.0.1:8000. Configured models are 
 
 ## Current models
 
-Doubao Seed 2.1 Pro (`doubao-seed-2-1-pro-260915`) handles understanding, planning, vision evaluation and repair decisions; MiniMax H3 generates video. Image generation is not connected. [模型职责、原有策略与后续路由扩展](docs/model-routing.md)。
+Doubao Seed 2.1 Pro (`doubao-seed-2-1-pro-260915`) handles understanding, planning, vision evaluation and repair decisions; Seedance 2.5, Seedance 2.0 and MiniMax H3 generate video. Image generation is not connected. [模型职责、原有策略与后续路由扩展](docs/model-routing.md)。
+
+## Video model recommendation
+
+Seedance 2.5、Seedance 2.0 与 MiniMax H3 已接入模型卡片与运行时选型 Skill。`VIDEO_PROVIDER=auto` 时，Doubao 推荐兼容候选，用户确认后生成。H3 仅在明确低预算目标下参与推荐。参考视频使用公开 HTTPS 链接；详见 [模型路由与能力边界](docs/model-routing.md)。

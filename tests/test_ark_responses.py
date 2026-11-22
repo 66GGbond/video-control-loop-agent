@@ -50,7 +50,7 @@ class ArkMigrationTests(unittest.TestCase):
         self.assertEqual(args[1], DEFAULT_MODEL)
         self.assertIn('acceptance_criteria',args[2])
         self.assertIn('immutable',args[2])
-        self.assertIn('4–15',args[2])
+        self.assertIn('4–30',args[2])
         self.assertIn('production_direction',args[2])
         self.assertEqual(args[3]['creative_brief'],'Keep the product logo stable in a 6-second clip.')
 

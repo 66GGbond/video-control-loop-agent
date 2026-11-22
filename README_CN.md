@@ -19,7 +19,7 @@
 | 产品能力 | 实现方式 |
 |---|---|
 | 视频生成可控性 | 将 Brief 拆解为场景所需的 1–6 个语义节拍、不可变约束、风险预测与原子验收标准；先定位问题节拍，再带着已通过约束重新生成完整视频版本。 |
-| 多模态素材治理 | 以 Asset Manifest 保存图片/音频的上传顺序与 `@` 关联；只有被明确关联的参考图才能成为参考一致性验收的证据。 |
+| 多模态素材治理 | 以 Asset Manifest 保存图片/音频/视频参考的输入顺序与 `@` 关联；只有被明确关联的参考图才能成为参考一致性验收的证据。 |
 | Brief 编译 | 用户只需表达创作意图；Agent 在不虚构用户事实的边界内补全镜头语言、画面处理、动作连续性与防错约束，并将其写入可审计的生成合同。 |
 | Prompt Engineering / 任务拆解 | `Prompt Compiler` 从同一控制计划生成可追溯的生成合同与评估合同，避免生成目标与评估标准脱节。 |
 | Quality Rubric / Bad Case 治理 | 关键标准必须有帧级证据；综合分仅用于诊断，不能覆盖关键失败或 Blocking Bad Case。 |
@@ -74,7 +74,7 @@ flowchart LR
 
 Agent 主链路与视频模型适配器分离。规划、Quality Rubric、版本记忆、预算策略和修复逻辑不依赖某个模型 ID；更换视频模型时，新增并验证对应的能力声明即可。
 
-当前 Seedance 1.0 Pro 仅作为测试适配器，不作为产品推荐，也不会默认假定其支持参考图。项目提供 MiniMax H3 V2 的异步适配器：请求使用官方 `content` 多模态数组，提交文本与用户按顺序上传的参考内容；本 MVP 最多提交 9 张 `reference_image` 和 3 段 `reference_audio`。多模态参考不会被误当作首帧，且不与首/尾帧模式混用。
+当前视频候选包括 Seedance 2.5、Seedance 2.0 和 MiniMax H3。Agent 按已声明的能力筛选并推荐模型，用户确认后提交生成；旧测试适配器不进入自动候选列表。
 
 ## 本地运行
 
@@ -87,7 +87,7 @@ python3 run_demo.py
 启用 MiniMax H3 时，在 `.env` 中填写：
 
 ```dotenv
-VIDEO_PROVIDER=minimax_h3
+VIDEO_PROVIDER=auto
 MINIMAX_API_KEY=你的 MiniMax API Key
 MINIMAX_VIDEO_MODEL=MiniMax-H3
 MINIMAX_VIDEO_RESOLUTION=768P
@@ -115,4 +115,8 @@ H3 V2 为异步任务；本项目会提交任务、轮询状态、下载生成�
 
 ## 当前模型
 
-Doubao Seed 2.1 Pro（`doubao-seed-2-1-pro-260915`）负责需求理解、规划、视觉质检与修复决策；MiniMax H3 负责视频生成。当前尚未接入图片生成模型。 [模型职责、原有策略与后续路由扩展](docs/model-routing.md)。
+Doubao Seed 2.1 Pro（`doubao-seed-2-1-pro-260915`）负责需求理解、规划、视觉质检与修复决策；Seedance 2.5、Seedance 2.0 和 MiniMax H3 负责视频生成。当前尚未接入图片生成模型。 [模型职责、原有策略与后续路由扩展](docs/model-routing.md)。
+
+## 视频模型推荐
+
+Seedance 2.5、Seedance 2.0 与 MiniMax H3 已接入模型卡片与运行时选型 Skill。`VIDEO_PROVIDER=auto` 时，Doubao 推荐兼容候选，用户确认后生成。H3 仅在明确低预算目标下参与推荐。参考视频使用公开 HTTPS 链接；详见 [模型路由与能力边界](docs/model-routing.md)。

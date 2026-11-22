@@ -58,6 +58,11 @@ class VideoCapabilityRegistry:
             and asset["data_url"].startswith("data:audio/")
             for asset in assets
         )
+        if self.provider == "auto":
+            return {"route":"selection_pending", "request_mode":"selection_pending", "tool_name":"select_video_model",
+                    "model_id":"", "provider_id":"model_router", "capability_profile_id":"pending_model_selection",
+                    "capability_profile":{"profile_id":"pending_model_selection", "lifecycle":"pending_user_selection", "verification_notice":"模型推荐需经用户确认后才会执行生成。"},
+                    "reason":"先根据需求筛选候选，再由用户确认模型。", "rejected_option":"不自动提交未经确认的模型。", "capability_snapshot":"selection_pending"}
         if self.provider in {"minimax_h3", "h3"}:
             return self._minimax_h3_route(has_reference, has_audio_reference)
         if self.provider in {"minimax", "minimax_hailuo", "hailuo"}:

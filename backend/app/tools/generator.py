@@ -96,15 +96,17 @@ class ArkVideoGenerator:
             raise ValueError(f"Seedance task lookup failed (HTTP {exc.code}): {detail}") from exc
         except OSError as exc:
             raise ValueError("Seedance task status could not be retrieved") from exc
-        status = str(parsed.get("status", "queued")).lower()
-        job.status = status if status in {"queued", "running", "succeeded", "failed", "canceled"} else "running"
+        status = str(parsed.get("status", "")).lower()
+        if status not in {"queued", "running", "succeeded", "failed", "canceled", "cancelled", "expired"}:
+            raise ValueError("Seedance returned an unrecognized task status; retain the existing task and retry polling")
+        job.status = status
         content = parsed.get("content") if isinstance(parsed.get("content"), dict) else {}
         video_url = content.get("video_url") or parsed.get("video_url")
         if isinstance(video_url, str) and video_url.startswith("https://"):
             job.output_video_url = video_url
         error = parsed.get("error") or parsed.get("message")
-        if job.status in {"failed", "canceled"} and error:
-            job.error = str(error)[:500]
+        if job.status in {"failed", "canceled", "cancelled", "expired"}:
+            job.error = str(error)[:500] if error else f"Seedance task {job.status}; no replacement task was submitted"
         return job
 
     @staticmethod

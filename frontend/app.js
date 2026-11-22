@@ -9,7 +9,7 @@ const endpoint = async (path, options = {}) => {
 };
 
 const EVALUATION_STATES = new Set(["ready_for_evaluation", "awaiting_repair_upload", "repair_uploaded", "published", "stopped_budget_exhausted"]);
-const MAX_VIDEO_DURATION_SECONDS = 15;
+const MAX_VIDEO_DURATION_SECONDS = 30;
 const DURATION_PATTERN = /(?<!\d)(\d+(?:\.\d+)?)\s*(?:-\s*)?(seconds?|secs?|s|秒|minutes?|mins?|分钟|分)(?![a-z])/gi;
 let selectedReferenceItems = [];
 let qualityLoopPending = false;
@@ -28,6 +28,7 @@ const human = value => String(value ?? "").replaceAll("_", " ").replace(/\b\w/g,
 const escapeHTML = value => String(value ?? "").replace(/[&<>'"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
 
 const isImageReference = file => file?.type?.startsWith("image/");
+const isVideoReference = file => file?.type?.startsWith("video/");
 const isAudioReference = file => ["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav"].includes(file?.type);
 const referenceFileKey = file => `${file.name}:${file.size}:${file.lastModified}:${file.type}`;
 const mentionLabel = file => `@${file.name}`;
@@ -400,6 +401,9 @@ function renderReferenceAttachments() {
       item.append(preview);
       item.addEventListener("mouseenter", () => previewImageReference(file, item));
       item.addEventListener("mouseleave", hideImageReferencePreview);
+    } else if (isVideoReference(file)) {
+      const icon = document.createElement("span");icon.textContent = "▶";icon.className = "reference-video-icon";
+      item.title = file.name;item.append(icon);
     } else {
       const icon = document.createElement("span");
       icon.className = "reference-audio-icon";
@@ -510,8 +514,8 @@ function readAudioReferenceFile(file) {
       reject(error);
       return;
     }
-    if (durationSeconds < 2 || durationSeconds > 15) {
-      reject(new Error(`Audio references must be 2–15 seconds. ${file.name} is ${durationSeconds.toFixed(1)} seconds.`));
+    if (durationSeconds < 2 || durationSeconds > 30) {
+      reject(new Error(`Audio references must be 2–30 seconds. ${file.name} is ${durationSeconds.toFixed(1)} seconds.`));
       return;
     }
     const reader = new FileReader();
@@ -693,7 +697,7 @@ function renderProjectStatus(state) {
     brief: ["Ready for a creative brief", "Describe the video to the Creative Agent to begin the controlled production loop.", "Brief", "Open Creative Agent"],
     context: ["Creative Agent needs one decision", "A missing context field could change a high-impact generation constraint.", "Context", "Answer the Agent"],
     plan: state.status === "needs_segmentation"
-      ? ["Multi-segment plan required", "The Agent determined this brief should not be compressed into one 15-second clip. Revise the brief or plan separate segments.", "Segment plan", "Revise brief"]
+      ? ["Multi-segment plan required", "The Agent determined this brief should not be compressed into one 30-second clip. Revise the brief or plan separate segments.", "Segment plan", "Revise brief"]
       : ["Control plan ready for approval", "Review the Agent's planned shots, constraints, risks, and bounded repair budget.", "Plan ready", "Approve control plan"],
     version: ["Video version in production", "The approved plan is being rendered or prepared as evidence for evaluation.", "Version", "Wait for video evidence"],
     quality: ["Quality control loop active", "Review the selected version, its evidence-backed quality result, and the Agent's next decision.", "Quality", "Review version result"],
@@ -808,8 +812,9 @@ function renderCreativeAgent(state, spec, enrichedContext) {
     const media = spec.multimodal_assets || [];
     const imageCount = media.filter(asset => asset.media_type === "image").length;
     const audioCount = media.filter(asset => asset.media_type === "audio").length;
+    const videoCount = media.filter(asset => asset.media_type === "video").length;
     referenceNote.hidden = !media.length;
-    referenceNote.textContent = media.length ? `Attached · ${imageCount} image reference(s), ${audioCount} audio reference(s)` : "";
+    referenceNote.textContent = media.length ? `Attached · ${imageCount} image reference(s), ${audioCount} audio reference(s), ${videoCount} video reference(s)` : "";
   }
   question.hidden = state.status !== "awaiting_context_confirmation";
   if (!question.hidden) {
@@ -1011,6 +1016,7 @@ function versionStateLabel(review) {
 }
 
 function nextVersionLabel(versionId) {
+  if (versionId === "none") return "V1";
   const number = Number(String(versionId || "").replace(/^v/i, ""));
   return Number.isInteger(number) && number > 0 ? `V${number + 1}` : "next version";
 }
@@ -1205,6 +1211,7 @@ function finishQualityProgress(success) {
 
 function render(state) {
   renderedState = state;
+  renderModelSelection(state);
   if (state.current_version_id !== lastCurrentVersionId) {
     selectedReviewVersionId = state.current_version_id;
     lastCurrentVersionId = state.current_version_id;
@@ -1277,15 +1284,17 @@ function render(state) {
   const referenceMedia = Array.isArray(spec.multimodal_assets) ? spec.multimodal_assets : [];
   const referenceImages = referenceMedia.filter(asset => asset && asset.media_type === "image");
   const referenceAudio = referenceMedia.filter(asset => asset && asset.media_type === "audio");
+  const referenceVideos = referenceMedia.filter(asset => asset && asset.media_type === "video");
   const reference = spec.reference_asset || referenceImages[0];
   const referenceLabel = [
     referenceImages.length ? `${referenceImages.length} image${referenceImages.length === 1 ? "" : "s"}` : "",
     referenceAudio.length ? `${referenceAudio.length} audio file${referenceAudio.length === 1 ? "" : "s"}` : "",
+    referenceVideos.length ? `${referenceVideos.length} video reference(s)` : "",
   ].filter(Boolean).join(" + ");
   document.querySelector("#reference-role-label").textContent = referenceLabel || "Prompt-derived constraints";
   document.querySelector("#reference-title").textContent = reference
     ? (referenceMedia.length > 1 ? `${referenceLabel} attached` : reference.name)
-    : (referenceAudio.length ? `${referenceLabel} attached` : "No reference media");
+    : (referenceMedia.length ? `${referenceLabel} attached` : "No reference media");
   document.querySelector("#reference-detail").textContent = referenceMedia.length
     ? "Reference material is retained for generation planning, provider routing, and later visual evaluation."
     : "The Agent will preserve constraints extracted from your brief.";
@@ -1442,12 +1451,12 @@ document.querySelector("#reference-media").addEventListener("change", event => {
       return;
     }
     if (existing.has(referenceFileKey(file))) return;
-    if (isImageReference(file) && imageCount >= 9) {
-      rejected.push(`${file.name}: maximum 9 images`);
+    if (isImageReference(file) && imageCount >= 30) {
+      rejected.push(`${file.name}: maximum 30 images`);
       return;
     }
-    if (isAudioReference(file) && audioCount >= 3) {
-      rejected.push(`${file.name}: maximum 3 audio files`);
+    if (isAudioReference(file) && audioCount >= 10) {
+      rejected.push(`${file.name}: maximum 10 audio files`);
       return;
     }
     selectedReferenceItems.push(file);
@@ -1511,8 +1520,8 @@ document.querySelector("#project-form").addEventListener("submit", async event =
       const multimodalAssets = await Promise.all(selectedReferenceItems.map(async (file, inputOrder) => {
         const asset = isImageReference(file)
           ? await readReferenceFile(file)
-          : await readAudioReferenceFile(file);
-        asset.role = isImageReference(file) ? "Visual reference" : "Audio reference";
+          : isVideoReference(file) ? {name:file.name,mime_type:file.type,url:file.reference_url,duration_seconds:file.duration_seconds,size:0} : await readAudioReferenceFile(file);
+        asset.role = isImageReference(file) ? "Visual reference" : isVideoReference(file) ? "reference_video" : "Audio reference";
         asset.input_order = inputOrder + 1;
         asset.prompt_mentions = promptMentionsFor(file, prompt);
         return asset;
@@ -1523,6 +1532,7 @@ document.querySelector("#project-form").addEventListener("submit", async event =
     }
     setEditorText("");
     clearReferenceAttachments();
+    if (["planning_ready", "awaiting_first_video", "awaiting_repair_upload"].includes(renderedState.status)) await recommendCurrentVideoModel();
   } catch (error) {
     I18n.alert(error.message);
   } finally {
@@ -1541,6 +1551,7 @@ document.querySelector("#confirm-context").addEventListener("click", async () =>
   button.textContent = "Continuing…";
   try {
     render(await endpoint("/api/confirm-context", { method: "POST", body: JSON.stringify({ target_market: market }) }));
+    if (renderedState.status === "planning_ready") await recommendCurrentVideoModel();
   } catch (error) {
     I18n.alert(error.message);
   } finally {
@@ -1640,6 +1651,14 @@ async function generateVideo(event) {
   const button = event?.currentTarget || document.querySelector("#generate-video");
   button.disabled = true;
   try {
+    const recommendation = await recommendCurrentVideoModel();
+    if (!recommendation.creative_spec.video_model_selection?.confirmed) {
+      if (autopilotIsRunning(recommendation)) render(await endpoint("/api/autopilot", {method:"POST",body:JSON.stringify({action:"pause"})}));
+      document.querySelector("#model-selection-panel").scrollIntoView({behavior:"smooth",block:"center"});
+      I18n.alert("请先确认本次使用的视频模型，再开始生成。");
+      button.disabled = false;
+      return;
+    }
     await approveCurrentPlan();
     const state = await endpoint("/api/generate-video", { method: "POST" });
     render(state);
@@ -1739,4 +1758,18 @@ window.addEventListener("languagechange", () => {
   if (!report) return;
   const reports = renderedState.version_reviews.map(item => item.report).filter(Boolean);
   drawTrend(document.querySelector("#trend-canvas"), reports, Number(report.rubric_profile?.overall_floor || 3));
+});
+
+document.querySelector("#add-reference-video").addEventListener("click", () => {
+  const input=document.querySelector("#reference-video-url");
+  const seconds=Number(document.querySelector("#reference-video-seconds").value);
+  try {
+    const url=new URL(input.value);
+    if (url.protocol!=="https:" || seconds<2 || seconds>30 || !Number.isFinite(seconds)) throw new Error("请提供 HTTPS 视频链接和 2–30 秒时长。");
+    if (selectedReferenceItems.filter(isVideoReference).length>=10) throw new Error("最多添加 10 个视频参考。");
+    const name=decodeURIComponent(url.pathname.split("/").at(-1)) || "reference.mp4";
+    if (selectedReferenceItems.some(file=>file.name.toLowerCase()===name.toLowerCase())) throw new Error("参考素材文件名不能重复。");
+    selectedReferenceItems.push({name,type:name.toLowerCase().endsWith(".mov")?"video/quicktime":"video/mp4",size:0,lastModified:0,reference_url:url.href,duration_seconds:seconds});
+    renderReferenceAttachments();input.value="";
+  }catch(error){I18n.alert(error.message);}
 });

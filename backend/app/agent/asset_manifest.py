@@ -28,7 +28,7 @@ def build_asset_manifest(assets: Iterable[dict[str, Any]] | None) -> list[dict[s
     entries: list[dict[str, Any]] = []
     for index, (input_order, _fallback_order, asset) in enumerate(sorted(ordered), start=1):
         media_type = str(asset.get("media_type", "")).lower().strip()
-        if media_type not in {"image", "audio"}:
+        if media_type not in {"image", "audio", "video"}:
             continue
         name = str(asset.get("name", f"reference-{index}")).strip() or f"reference-{index}"
         raw_mentions = asset.get("prompt_mentions", [])

@@ -204,7 +204,7 @@ class PromptCompiler:
         if not isinstance(reference, dict) or reference.get("mode") not in {"text_only", "reference_conditioned", "first_frame_conditioned", "reference_retained_not_applied"}:
             raise ValueError("Prompt Compiler gate G4 failed: invalid reference strategy")
         binding = generation_contract.get("provider_binding")
-        if not isinstance(binding, dict) or binding.get("intended_mode") not in {"text_to_video", "image_conditioned_video", "image_to_video", "reference_to_video", "unavailable"}:
+        if not isinstance(binding, dict) or binding.get("intended_mode") not in {"text_to_video", "image_conditioned_video", "image_to_video", "reference_to_video", "unavailable", "selection_pending"}:
             raise ValueError("Prompt Compiler gate G8 failed: provider binding is incomplete")
         sampling = validate_evidence_sampling_policy(
             (evaluation_contract.get("evidence_plan") or {}).get("sampling_policy"),
@@ -281,16 +281,18 @@ class PromptCompiler:
         assets = spec.multimodal_assets or ([spec.reference_asset] if spec.reference_asset else [])
         image_assets = [asset for asset in assets if isinstance(asset, dict) and isinstance(asset.get("preview_data_url"), str) and asset["preview_data_url"].startswith("data:image/")]
         audio_assets = [asset for asset in assets if isinstance(asset, dict) and str(asset.get("media_type", "")).lower() == "audio" and isinstance(asset.get("data_url"), str) and asset["data_url"].startswith("data:audio/")]
-        asset = image_assets[0] if image_assets else (spec.reference_asset or {})
-        if image_assets or audio_assets:
+        video_assets = [asset for asset in assets if asset.get("media_type") == "video"]
+        asset = image_assets[0] if image_assets else (video_assets[0] if video_assets else spec.reference_asset or {})
+        if image_assets or audio_assets or video_assets:
             reference_applied = provider_binding.get("intended_mode") in {"image_conditioned_video", "image_to_video", "reference_to_video"}
             first_frame_mode = provider_binding.get("intended_mode") == "image_to_video"
             return {
                 "mode": "first_frame_conditioned" if first_frame_mode else "reference_conditioned" if reference_applied else "reference_retained_not_applied",
                 "asset_name": str(asset.get("name", "reference image")),
-                "asset_count": len(image_assets) + len(audio_assets),
+                "asset_count": len(image_assets) + len(audio_assets) + len(video_assets),
                 "image_reference_count": len(image_assets),
                 "audio_reference_count": len(audio_assets),
+                "video_reference_count": len(video_assets),
                 "fact_provenance": "user_supplied_asset",
                 "honesty_notice": (
                     "Only the first ordered usable image is submitted as the provider's opening-frame condition. Additional images and audio remain in Agent memory and the evaluation contract; it does not guarantee per-frame identity preservation."
@@ -430,6 +432,14 @@ class PromptCompiler:
 
     def _provider_binding(self, spec, output: Dict[str, Any]) -> Dict[str, Any]:
         route = self.capabilities.route(spec.reference_asset, spec.multimodal_assets)
+        choice = spec.video_model_selection
+        if self.capabilities.provider == "auto" and choice.get("confirmed"):
+            from .model_router import RoutingVideoGenerator
+            from ..domain.models import ProjectState
+            adapter = RoutingVideoGenerator().adapters.get(choice.get("selected_model"))
+            if adapter is None:
+                raise ValueError("Selected video adapter is unavailable")
+            route = adapter.select_tool(ProjectState(project_id="binding", creative_spec=spec))
         return {
             "adapter_id": route["provider_id"],
             "adapter_version": "2",

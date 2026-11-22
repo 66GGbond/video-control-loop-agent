@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Video Control Loop Agent</title>
-    <link rel="stylesheet" href="styles.css?v=local-v2" />
+    <link rel="stylesheet" href="styles.css?v=router-v1" />
   </head>
   <body>
     <main>
@@ -23,6 +23,16 @@
         </div>
       </header>
 
+      <section id="model-selection-panel" class="panel model-selection-panel" hidden aria-labelledby="model-selection-title">
+        <div class="panel-heading"><h2 id="model-selection-title">Video model selection</h2><span id="model-selection-status" class="pill">Model selection</span></div>
+        <p id="model-recommendation-reason"></p>
+        <small id="model-selection-source"></small>
+        <p class="model-price-notice">实际价格、生成速度和效果尚未完成对照实测；推荐理由是模型判断，不是性能保证。</p>
+        <ul id="model-candidate-list"></ul>
+        <label for="video-model-select">Choose video model</label>
+        <div class="model-selection-actions"><select id="video-model-select"></select><button id="recommend-video-model" class="secondary" type="button">Recommend model</button><button id="confirm-video-model" class="primary" type="button">Confirm model</button></div>
+        <ul id="model-selection-warnings" role="status" aria-live="polite"></ul>
+      </section>
       <section id="project-status-panel" class="project-status-panel" aria-labelledby="project-status-title">
         <div class="project-status-heading">
           <div><p class="section-kicker">PROJECT STATUS</p><h2 id="project-status-title">Ready for a creative brief</h2><p id="project-status-copy">Describe the video to the Creative Agent to begin the controlled production loop.</p></div>
@@ -135,6 +145,7 @@
           </div>
         </section>
       </div>
+      <details class="reference-video-input"><summary>Reference video URL</summary><label for="reference-video-url">Public HTTPS video URL</label><input id="reference-video-url" type="url" placeholder="https://…/reference.mp4" /><label for="reference-video-seconds">Duration in seconds</label><input id="reference-video-seconds" type="number" min="2" max="30" step="0.1" /><button id="add-reference-video" type="button" class="secondary">Add video reference</button><small>链接必须可供模型服务访问；填写原视频时长。当前不上传本地参考视频。</small></details>
       <form id="project-form" class="creative-agent-composer">
         <label id="creative-prompt-label" for="creative-prompt">Creative brief</label>
         <div class="brief-input-shell">
@@ -159,8 +170,9 @@
       </div>
       <video id="review-video-player" controls playsinline preload="metadata"></video>
     </dialog>
-    <script src="i18n-catalog.js?v=local-v2"></script>
-    <script src="i18n.js?v=local-v2"></script>
-    <script src="app.js?v=local-v2"></script>
+    <script src="i18n-catalog.js?v=router-v1"></script>
+    <script src="i18n.js?v=router-v1"></script>
+    <script src="model-selection.js?v=router-v1"></script>
+    <script src="app.js?v=router-v1"></script>
   </body>
 </html>

@@ -351,18 +351,18 @@ class AgentLoopTests(unittest.TestCase):
         self.assertEqual(plan["timeline"], [])
 
     def test_generation_spec_rejects_minute_duration_over_limit(self):
-        with self.assertRaisesRegex(ValueError, "15"):
+        with self.assertRaisesRegex(ValueError, "30"):
             fallback_generation_spec("制作一条 1 分钟的品牌故事视频，展示三个阶段。")
 
-    def test_generation_spec_rejects_duration_over_fifteen_seconds(self):
-        with self.assertRaisesRegex(ValueError, "15"):
-            validate_brief_duration("请生成一支 16 秒的广告视频")
-        with self.assertRaisesRegex(ValueError, "15"):
-            fallback_generation_spec("Create a 20-second product story")
-        with self.assertRaisesRegex(ValueError, "15"):
-            validate_generation_spec({"duration_seconds": 16, "aspect_ratio": "16:9", "quality_target": "standard", "rationale": "too long"})
-        with self.assertRaisesRegex(ValueError, "15"):
-            validate_brief_duration("开场 10 秒，但总时长为 20 秒")
+    def test_generation_spec_rejects_duration_over_thirty_seconds(self):
+        with self.assertRaisesRegex(ValueError, "30"):
+            validate_brief_duration("请生成一支 31 秒的广告视频")
+        with self.assertRaisesRegex(ValueError, "30"):
+            fallback_generation_spec("Create a 31-second product story")
+        with self.assertRaisesRegex(ValueError, "30"):
+            validate_generation_spec({"duration_seconds": 31, "aspect_ratio": "16:9", "quality_target": "standard", "rationale": "too long"})
+        with self.assertRaisesRegex(ValueError, "30"):
+            validate_brief_duration("开场 10 秒，但总时长为 31 秒")
 
     def test_generation_tool_selects_reference_strategy_only_when_pixels_exist(self):
         generator = ArkVideoGenerator(api_key="test-key", text_model="seedance-text", reference_model="seedance-reference")

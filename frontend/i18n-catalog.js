@@ -769,8 +769,8 @@ window.I18N_CATALOG = [
     "针对问题重新生成完整视频"
   ],
   [
-    "The Agent determined this brief should not be compressed into one 15-second clip. Revise the brief or plan separate segments.",
-    "Agent 判断此需求不适合压缩成一条 15 秒视频，请修改需求或分段制作。"
+    "The Agent determined this brief should not be compressed into one 30-second clip. Revise the brief or plan separate segments.",
+    "Agent 判断此需求不适合压缩成一条 30 秒视频，请修改需求或分段制作。"
   ],
   [
     "The Agent has prepared a targeted repair. Continue it from this Agent card, then it will be verified automatically.",
@@ -1463,5 +1463,233 @@ window.I18N_CATALOG = [
   [
     "Archived model plan",
     "历史模型规划"
+  ],
+  [
+    "Video model selection",
+    "视频模型选择"
+  ],
+  [
+    "Model selection",
+    "模型选择"
+  ],
+  [
+    "Model confirmed",
+    "模型已确认"
+  ],
+  [
+    "Awaiting model confirmation",
+    "等待模型确认"
+  ],
+  [
+    "Choose video model",
+    "选择视频模型"
+  ],
+  [
+    "Recommend model",
+    "获取模型推荐"
+  ],
+  [
+    "Confirm model",
+    "确认使用此模型"
+  ],
+  [
+    "Doubao Seed 2.1 Pro recommendation",
+    "豆包 Seed 2.1 Pro 推荐"
+  ],
+  [
+    "Policy fallback recommendation",
+    "策略备用推荐"
+  ],
+  [
+    "Capability screening",
+    "能力筛选"
+  ],
+  [
+    "§0§ · Recommended",
+    "§0§ · 推荐"
+  ],
+  [
+    "Reference video URL",
+    "参考视频链接"
+  ],
+  [
+    "Public HTTPS video URL",
+    "可公开访问的 HTTPS 视频链接"
+  ],
+  [
+    "Duration in seconds",
+    "视频时长（秒）"
+  ],
+  [
+    "Add video reference",
+    "添加视频参考"
+  ],
+  [
+    "Audio references must be 2–30 seconds. §0§ is §1§ seconds.",
+    "音频参考时长必须为 2–30 秒。§0§ 的时长为 §1§ 秒。"
+  ],
+  [
+    "§0§: maximum 30 images",
+    "§0§：最多添加 30 张图片"
+  ],
+  [
+    "§0§: maximum 10 audio files",
+    "§0§：最多添加 10 段音频"
+  ],
+  [
+    "Actual prices, generation speed and quality have not been compared in controlled tests. Recommendations are model judgments, not performance guarantees.",
+    "实际价格、生成速度和效果尚未完成对照实测；推荐理由是模型判断，不是性能保证。"
+  ],
+  [
+    "The video URL must be accessible to the model service. Enter its original duration. Local video-file upload is not supported here.",
+    "链接必须可供模型服务访问；填写原视频时长。当前不上传本地参考视频。"
+  ],
+  [
+    "Get a model recommendation, then confirm which model to use.",
+    "获取模型推荐后，确认本次使用的模型。"
+  ],
+  [
+    "Please confirm the video model before starting generation.",
+    "请先确认本次使用的视频模型，再开始生成。"
+  ],
+  [
+    "Please provide an HTTPS video URL and a duration of 2–30 seconds.",
+    "请提供 HTTPS 视频链接和 2–30 秒时长。"
+  ],
+  [
+    "Up to 10 video references may be added.",
+    "最多添加 10 个视频参考。"
+  ],
+  [
+    "Reference filenames must be unique.",
+    "参考素材文件名不能重复。"
+  ],
+  [
+    "The brief has changed. Please get a new model recommendation.",
+    "需求已变化，请重新获取模型推荐。"
+  ],
+  [
+    "This model is incompatible with the current requirements or selection policy.",
+    "该模型不符合当前需求或使用策略。"
+  ],
+  [
+    "Review the recommendation and confirm a video model first.",
+    "请先查看推荐并确认本次视频生成模型。"
+  ],
+  [
+    "The selected model is no longer available or compatible. Please select again.",
+    "已选模型当前不可用或不再符合需求，请重新选择。"
+  ],
+  [
+    "Video model selection cannot be changed at this stage.",
+    "当前阶段不能更改视频生成模型。"
+  ],
+  [
+    "No compatible, configured candidate is available. Adjust the brief or complete the configuration.",
+    "没有兼容且已配置的候选模型，请调整需求或补全配置。"
+  ],
+  [
+    "The decision model is unavailable. This fallback recommendation follows capability constraints and configured policy; it is not a measured quality ranking.",
+    "决策模型暂不可用；按能力约束和已配置策略给出备用推荐，不代表效果实测排名。"
+  ],
+  [
+    "Reference audio does not guarantee exact dialogue, voice identity, rhythm or lip sync. The app has no ASR, beat or lip-sync verification tools; critical audio results need human review.",
+    "参考音频不等于逐字台词、音色、节奏或口型必然准确；当前项目尚无 ASR、节拍和口型质量验收工具，关键音频结果需要人工复核。"
+  ],
+  [
+    "H3 is a candidate because of your low-budget preference. Actual costs depend on the provider bill; complex audio requirements need human review or another candidate.",
+    "H3 按你的低预算偏好进入候选，实际费用以平台账单为准；复杂音频要求建议人工复核或考虑其他候选。"
+  ],
+  [
+    "The current H3 adapter does not support video references yet. This is an adapter limitation, not a model limitation.",
+    "当前 H3 适配器尚未接入视频参考；这是适配器边界，不是模型不支持视频。"
+  ],
+  [
+    "H3 is only recommended when the user explicitly requests minimum cost or a low-budget objective.",
+    "仅在用户明确提出最低成本或低预算目标时推荐 H3。"
+  ],
+  [
+    "Audio references require an accompanying image or video reference.",
+    "音频参考必须同时提供图片或视频参考。"
+  ],
+  [
+    "The dedicated key for this model is not configured.",
+    "未配置该模型的专用密钥。"
+  ],
+  [
+    "The current §0§-second duration is not supported.",
+    "不支持当前 §0§ 秒时长。"
+  ],
+  [
+    "The current §0§ reference count exceeds the adapter limit of §1§.",
+    "当前 §0§ 参考数量超出适配器上限 §1§。"
+  ],
+  [
+    "The §0§ reference duration is unknown or outside the model limits.",
+    "§0§ 参考时长未知或不符合模型范围。"
+  ],
+  [
+    "The total §0§ reference duration exceeds the limit.",
+    "§0§ 参考总时长超出上限。"
+  ],
+  [
+    "First/last-frame input cannot be mixed with multimodal references.",
+    "首尾帧模式与全模态参考不能混用。"
+  ],
+  [
+    "The current H3 adapter supports multimodal references but not first/last-frame mode.",
+    "当前 H3 适配器只接入全模态参考，尚未接入首尾帧模式。"
+  ],
+  [
+    "4–30 second output",
+    "4–30 秒输出"
+  ],
+  [
+    "Audio-only references supported",
+    "可仅用音频参考"
+  ],
+  [
+    "Native multimodal reference and joint audio/video generation",
+    "原生多模态参考和音画同生"
+  ],
+  [
+    "4–15 second output",
+    "4–15 秒输出"
+  ],
+  [
+    "Combined image, video and audio references",
+    "图片、视频与音频组合参考"
+  ],
+  [
+    "Native joint audio/video generation",
+    "原生音画同生"
+  ],
+  [
+    "Current adapter: 768P / 2K",
+    "当前适配器 768P / 2K"
+  ],
+  [
+    "Image and audio references",
+    "图片和音频参考"
+  ],
+  [
+    "User-designated low-cost candidate; actual prices are unverified",
+    "用户指定的低成本候选；实际价格未核验"
+  ],
+  [
+    "Attached · §0§ image reference(s), §1§ audio reference(s), §2§ video reference(s)",
+    "已添加 · §0§ 张参考图、§1§ 段参考音频、§2§ 个参考视频"
+  ],
+  [
+    "§0§ video reference(s)",
+    "§0§ 个参考视频"
+  ],
+  [
+    "The model configuration changed. Get a fresh recommendation and confirm again.",
+    "模型配置已变化，请重新获取推荐并确认。"
+  ],
+  [
+    "The current H3 adapter has no option to disable the audio track.",
+    "当前 H3 适配器没有关闭音轨的参数。"
   ]
 ];

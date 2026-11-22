@@ -4,7 +4,7 @@ The planning model decides *what* each beat needs to communicate.  This module
 then makes the provider-bound timing decision deterministic and auditable.  It
 prevents a convenient but unreliable ``8 seconds by default`` behaviour.
 
-The policy is intentionally limited to one 4–15-second logical clip. A video
+The policy is intentionally limited to one 4–30-second logical clip. A video
 provider may impose a narrower executable duration set; its adapter reports
 that constraint before submission rather than silently changing the approved
 plan. A story that needs independent scenes or more temporal change than one
@@ -19,7 +19,7 @@ from .timing import MAX_BEATS, MIN_BEATS, expected_shot_ids, normalise_shot_time
 
 
 MIN_SINGLE_CLIP_SECONDS = 4
-MAX_SINGLE_CLIP_SECONDS = 15
+MAX_SINGLE_CLIP_SECONDS = 30
 _PACING_BY_FUNCTION = {
     "establish": {"glimpse", "readable"},
     "action": {"simple", "dynamic", "transformation"},
@@ -156,7 +156,7 @@ def build_duration_plan(
             return {
                 "mode": "needs_segmentation",
                 "source": source,
-                "reason": "The planned beats need more than 15 seconds of readable screen time; splitting is safer than compressing them.",
+                "reason": "The planned beats need more than 30 seconds of readable screen time; splitting is safer than compressing them.",
                 "beat_plan": beat_plan,
                 "total_duration_seconds": None,
                 "timeline": [],

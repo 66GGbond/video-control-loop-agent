@@ -160,6 +160,11 @@ class MiniMaxH3Generator:
     def _request_body(self, state: ProjectState, selection: Dict[str, Any], prompt: str) -> Dict[str, Any]:
         contract = state.creative_spec.generation_contract or {}
         output = validate_generation_spec(contract.get("output_spec") or state.creative_spec.generation_spec)
+        if output["duration_seconds"] > 15:
+            raise ValueError("MiniMax H3 supports at most 15 seconds per clip")
+        assets = state.creative_spec.multimodal_assets or []
+        if sum(a.get("media_type") == "image" for a in assets) > 9 or sum(a.get("media_type") == "audio" for a in assets) > 3 or any(a.get("media_type") == "video" for a in assets):
+            raise ValueError("References exceed the implemented H3 adapter limits")
         content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
         if selection["request_mode"] == "reference_to_video":
             assets = state.creative_spec.multimodal_assets or (
