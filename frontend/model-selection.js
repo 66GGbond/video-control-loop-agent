@@ -1,4 +1,5 @@
 let modelRecommendationPending = null;
+let modelDraftSelection = null;
 
 function renderModelSelection(state) {
   const panel=document.querySelector('#model-selection-panel');
@@ -8,22 +9,22 @@ function renderModelSelection(state) {
   if (!hasPlan) return;
   const choice=spec.video_model_selection || {};
   const select=document.querySelector('#video-model-select');
-  const previous=select.value;
   select.replaceChildren();
   const eligible=(choice.candidates || []).filter(card=>card.eligible);
+  if(modelDraftSelection?.fingerprint!==choice.fingerprint || !eligible.some(c=>c.model_id===modelDraftSelection?.model)) modelDraftSelection=null;
   for (const card of eligible) {
     const option=document.createElement('option');
     option.value=card.model_id;
     option.textContent=card.name+(card.model_id===choice.recommended_model?' · Recommended':'');
     select.append(option);
   }
-  select.value=choice.selected_model || (eligible.some(c=>c.model_id===previous)?previous:choice.recommended_model) || '';
+  select.value=modelDraftSelection?.model || choice.selected_model || choice.recommended_model || '';
   const active=['planning_ready','awaiting_first_video','awaiting_repair_upload'].includes(state.status);
   select.disabled=!active || !eligible.length;
   document.querySelector('#confirm-video-model').disabled=!active || !eligible.length;
   document.querySelector('#recommend-video-model').disabled=!active || Boolean(modelRecommendationPending);
   document.querySelector('#model-recommendation-reason').textContent=choice.reason || '获取模型推荐后，确认本次使用的模型。';
-  document.querySelector('#model-selection-status').textContent=choice.confirmed?'Model confirmed':choice.recommended_model?'Awaiting model confirmation':'Model selection';
+  document.querySelector('#model-selection-status').textContent=choice.confirmed && select.value===choice.selected_model?'Model confirmed':choice.recommended_model?'Awaiting model confirmation':'Model selection';
   const list=document.querySelector('#model-candidate-list');
   list.replaceChildren();
   for (const card of choice.candidates || []) {
@@ -60,6 +61,8 @@ document.querySelector('#recommend-video-model').addEventListener('click',async(
 });
 document.querySelector('#video-model-select').addEventListener('change',()=>{
   const choice=renderedState?.creative_spec?.video_model_selection || {};
+  modelDraftSelection={fingerprint:choice.fingerprint,model:document.querySelector('#video-model-select').value};
+  document.querySelector('#model-selection-status').textContent=choice.confirmed && modelDraftSelection.model===choice.selected_model?'Model confirmed':'Awaiting model confirmation';
   const warnings=document.querySelector('#model-selection-warnings');warnings.replaceChildren();
   const card=(choice.candidates||[]).find(c=>c.model_id===document.querySelector('#video-model-select').value);
   for(const text of card?.warnings||[]) {const item=document.createElement('li');item.textContent=text;warnings.append(item);}

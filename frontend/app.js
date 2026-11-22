@@ -1652,7 +1652,8 @@ async function generateVideo(event) {
   button.disabled = true;
   try {
     const recommendation = await recommendCurrentVideoModel();
-    if (!recommendation.creative_spec.video_model_selection?.confirmed) {
+    const choice=recommendation.creative_spec.video_model_selection;
+    if (!choice?.confirmed || document.querySelector('#video-model-select').value!==choice.selected_model) {
       if (autopilotIsRunning(recommendation)) render(await endpoint("/api/autopilot", {method:"POST",body:JSON.stringify({action:"pause"})}));
       document.querySelector("#model-selection-panel").scrollIntoView({behavior:"smooth",block:"center"});
       I18n.alert("请先确认本次使用的视频模型，再开始生成。");
