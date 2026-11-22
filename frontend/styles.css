@@ -124,20 +124,6 @@ h2 { font-size: 16px; margin: 0; letter-spacing: -.01em; }
 .reference-add-control { display: grid; width: 48px; height: 48px; flex: 0 0 48px; place-items: center; border: 1px dashed #765bb4; border-radius: 9px; color: #d9cdff; background: rgba(118,80,246,.1); cursor: pointer; transition: border-color .14s ease, background .14s ease; }.reference-add-control input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }.reference-add-control span { font-size: 23px; font-weight: 400; line-height: .8; }.reference-add-control strong { margin-top: -4px; font-size: 8px; letter-spacing: .01em; }.reference-add-control:hover { border-color: #b79dff; color: #fff; background: rgba(118,80,246,.28); }
 .reference-mention-menu { position: absolute; z-index: 42; top: 55px; right: 10px; left: 10px; display: flex; max-height: 154px; gap: 7px; overflow-x: auto; overflow-y: hidden; padding: 8px; border: 1px solid rgba(169,141,255,.58); border-radius: 10px; background: #1a1428; box-shadow: 0 16px 36px rgba(0,0,0,.48); scrollbar-width: none; }.reference-mention-menu::-webkit-scrollbar { display: none; }.reference-mention-menu[hidden] { display: none; }.reference-mention-option { position: relative; display: grid; width: 72px; height: 72px; flex: 0 0 72px; place-items: center; overflow: hidden; border: 1px solid rgba(157,116,255,.42); border-radius: 9px; padding: 0; color: #ddd5ec; background: #211a31; cursor: pointer; font: inherit; }.reference-mention-option:hover, .reference-mention-option:focus-visible { border-color: #d2bdff; box-shadow: 0 0 0 2px rgba(157,116,255,.2); outline: 0; }.reference-mention-option img { width: 100%; height: 100%; object-fit: cover; }.mention-option-audio { display: grid; width: 100%; height: 100%; place-items: center; color: #fff; background: linear-gradient(135deg, #5e3ad3, #9470f4); font-size: 28px; }
 
-/* Trial controls share the existing visual system and remain usable on mobile. */
-.trial-bar {display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 20px; margin-bottom:20px; border:1px solid var(--line); border-radius:16px; background:var(--panel); color:var(--text);}
-.trial-bar p {margin:0; line-height:1.6;}
-.trial-bar > div, .trial-dialog-actions {display:flex; gap:10px; flex-shrink:0;}
-.trial-dialog {width:min(440px, calc(100vw - 32px)); box-sizing:border-box; border:1px solid var(--line); border-radius:20px; padding:28px; background:#14111f; color:var(--text); box-shadow:0 24px 90px #18204433;}
-.trial-dialog::backdrop {background:#10152588;}
-.trial-dialog h2 {margin:0 0 12px;}
-.trial-dialog p {line-height:1.7;}
-.trial-dialog label {display:block; margin:20px 0 8px;}
-.trial-dialog input {box-sizing:border-box; width:100%; padding:12px; font-size:20px; letter-spacing:.3em; border:1px solid #645778; border-radius:8px; color:var(--text); background:var(--bg);}
-.trial-dialog-actions {justify-content:flex-end; margin-top:24px;}
-.trial-error {color:var(--red); min-height:24px;}
-.trial-demo-notice {padding:12px 20px; background:#211836; color:#d6c4ff; border-radius:12px;}
-@media(max-width:640px) {.trial-bar {align-items:flex-start; flex-direction:column;} .trial-bar > div {flex-wrap:wrap;}}
 .log-row > *, .log-panel {min-width:0;}
 .log-detail {overflow-wrap:anywhere;}
 

@@ -238,7 +238,6 @@ class ProjectState:
     execution_mode: str = "collaborative"
     autopilot_paused: bool = False
     pending_user_direction: str = ""
-    demo_mode: bool = False
 
 
 def to_jsonable(value: Any) -> Any:

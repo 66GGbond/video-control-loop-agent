@@ -14,4 +14,4 @@ jobs:
         with:
           node-version: '22'
       - run: python3 -m unittest -q
-      - run: node --check frontend/app.js && node --check frontend/trial.js && node --check frontend/i18n.js && node --check frontend/i18n-catalog.js
+      - run: node --check frontend/app.js && node --check frontend/i18n.js && node --check frontend/i18n-catalog.js

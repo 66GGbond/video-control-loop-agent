@@ -1,4 +1,12 @@
-const endpoint = trialRequest;
+const endpoint = async (path, options = {}) => {
+  const response = await fetch(path, {
+    ...options,
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+  });
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || "Request failed. Please try again later.");
+  return body;
+};
 
 const EVALUATION_STATES = new Set(["ready_for_evaluation", "awaiting_repair_upload", "repair_uploaded", "published", "stopped_budget_exhausted"]);
 const MAX_VIDEO_DURATION_SECONDS = 15;
@@ -1715,7 +1723,7 @@ document.querySelector("#reset").addEventListener("click", async () => {
   } catch (error) { I18n.alert(error.message); }
 });
 
-// Keep the public overview and trial controls reachable on narrow screens.
+// Keep the project overview reachable on narrow screens.
 const compactLayout = window.matchMedia("(max-width: 1259px)");
 function collapseCompactAgent() {
   if (!compactLayout.matches) return;

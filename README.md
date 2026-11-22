@@ -108,6 +108,6 @@ The H3 V2 adapter submits an asynchronous task, polls its status, downloads the 
 - Every provider endpoint must be capability-validated before accepting image, video, or audio inputs.
 - Next: validate three real-video cases—brand/product integrity, character continuity, and action/narrative completion.
 
-## Public trial deployment
+## Local interview demo
 
-[体验码、30 秒额度、锁定规则与部署说明](docs/public-demo-deployment.md)。体验码由作者在服务器设置为四位数字；不要在前端或仓库中保存体验码或 API Key。
+Run `python3 run_demo.py` and open http://127.0.0.1:8000. Configured models are available directly, without trial codes or a total video-duration allowance. Switch Chinese / English at the top right. Projects persist locally; repair iteration budgets and per-clip model limits still apply.

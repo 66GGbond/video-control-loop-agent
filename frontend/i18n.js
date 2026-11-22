@@ -44,8 +44,7 @@
           const value = match[i + 1];
           const knownMessage = pattern.pair[0].startsWith("§0§ Evidence sampling will focus on") && id === "§0§";
           const label = (isLabelPattern || knownMessage) && exact.get(normalize(value).toLowerCase());
-          const appendedNotice = pattern.pair[0].startsWith("Video generated. Video allowance remaining:") && id === "§1§";
-          return [id, label ? label[language === "en" ? 0 : 1] : appendedNotice ? translate(value) : value];
+          return [id, label ? label[language === "en" ? 0 : 1] : value];
         }));
         translated = pattern.pair[language === "en" ? 0 : 1].replace(/§\d+§/g, id => captures[id] ?? "");
         break;

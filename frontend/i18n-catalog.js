@@ -9,7 +9,7 @@ window.I18N_CATALOG = [
     "AI 视频生成质量控制系统：诊断、规划、修复、验证。"
   ],
   [
-    "Reset demo",
+    "Reset project",
     "重置项目"
   ],
   [
@@ -1301,38 +1301,6 @@ window.I18N_CATALOG = [
     "§0§：已有证据 §1§/§2§"
   ],
   [
-    "Trial code",
-    "体验码"
-  ],
-  [
-    "Trial code and video allowance",
-    "体验码与视频额度"
-  ],
-  [
-    "Trial code enabled. Video allowance remaining: §0§ seconds.",
-    "体验码已启用，剩余视频额度 §0§ 秒。"
-  ],
-  [
-    "The trial code's video allowance has been used up. Thank you for trying it.",
-    "体验码的视频额度已用完，感谢体验。"
-  ],
-  [
-    "The trial code's video allowance has been used up. Thank you for trying it. You can still view generated videos and demo examples.",
-    "体验码的视频额度已用完，感谢体验。你仍可查看已生成的视频和演示案例。"
-  ],
-  [
-    "Trial code entry is locked. Please contact the project author to unlock it.",
-    "体验码输入已锁定，请联系作品作者解锁。"
-  ],
-  [
-    "Trial code entry is locked after 5 consecutive incorrect attempts. Please contact the project author to unlock it.",
-    "连续输入错误已达 5 次，体验码输入已锁定。如需解锁，请联系作品作者。"
-  ],
-  [
-    "Incorrect trial code. §0§ attempts remaining.",
-    "体验码不正确，还可尝试 §0§ 次。"
-  ],
-  [
     "Repair budget exhausted: currently §0§ rounds. Increase the limit to authorize further repairs.",
     "修复预算已耗尽：当前为 §0§ 轮。增加次数即可授权 Agent 继续修复。"
   ],
@@ -1351,18 +1319,6 @@ window.I18N_CATALOG = [
   [
     "Decrease repair budget",
     "减少修复次数"
-  ],
-  [
-    "Video allowance remaining: §0§ seconds. Not enough for a §1§-second video; please shorten the duration.",
-    "剩余视频额度 §0§ 秒，不足以生成 §1§ 秒视频，请缩短生成时长。"
-  ],
-  [
-    "Video allowance remaining: §0§ seconds",
-    "剩余视频额度：§0§ 秒"
-  ],
-  [
-    "Video allowance remaining: §0§ seconds · §1§ seconds reserved",
-    "剩余视频额度：§0§ 秒 · 已预留 §1§ 秒额度"
   ],
   [
     "A single video can be up to §0§ seconds. Please adjust this duration.",
@@ -1401,30 +1357,6 @@ window.I18N_CATALOG = [
     "暂停 Agent 自主代理：当前步骤完成后停止下一步"
   ],
   [
-    "Unable to verify the trial code. Check your connection and try again.",
-    "暂时无法验证体验码，请检查网络后重试。"
-  ],
-  [
-    "Change trial code",
-    "更换体验码"
-  ],
-  [
-    "This optimization will regenerate a §0§-second video and use the corresponding allowance, leaving §1§ seconds.",
-    "本次优化将重新生成 §0§ 秒视频，并使用对应额度，完成后剩余 §1§ 秒。"
-  ],
-  [
-    "This generation will use §0§ seconds of video allowance, leaving §1§ seconds on completion.",
-    "本次将使用 §0§ 秒视频额度，完成后剩余 §1§ 秒。"
-  ],
-  [
-    "View demo example",
-    "查看演示案例"
-  ],
-  [
-    "Demo example · The control plan and quality results below are predefined examples. They do not call models or use video allowance.",
-    "演示案例 · 以下控制计划和质检结果来自预置示例，不会调用模型或消耗视频额度。"
-  ],
-  [
     "Confirm",
     "确认"
   ],
@@ -1433,52 +1365,12 @@ window.I18N_CATALOG = [
     "确认优化"
   ],
   [
-    "Confirm video allowance",
-    "确认视频额度"
-  ],
-  [
     "Resume Agent autonomy",
     "继续 Agent 自主代理"
   ],
   [
-    "Video generated. Video allowance remaining: §0§ seconds.§1§",
-    "视频已生成，剩余视频额度 §0§ 秒。§1§"
-  ],
-  [
-    "Generating video. §0§ seconds reserved. Video allowance remaining: §1§ seconds.",
-    "视频生成中，已预留 §0§ 秒额度。剩余视频额度：§1§ 秒。"
-  ],
-  [
-    "Video generation failed. Video allowance remaining: §0§ seconds.",
-    "视频生成失败，剩余视频额度 §0§ 秒。"
-  ],
-  [
-    "Video allowance used up. Further generation is unavailable.",
-    "视频额度已用完，暂时无法继续生成。"
-  ],
-  [
     "Request failed. Please try again later.",
     "请求失败，请稍后再试。"
-  ],
-  [
-    "Please enter a trial code",
-    "请输入体验码"
-  ],
-  [
-    "Please enter a trial code.",
-    "请输入体验码。"
-  ],
-  [
-    "Enter trial code",
-    "输入体验码"
-  ],
-  [
-    "Enter a trial code to unlock the AI experience.",
-    "输入体验码，解锁 AI 体验。"
-  ],
-  [
-    "Enter a trial code to unlock the AI experience, or view the demo example directly.",
-    "输入体验码，解锁 AI 体验；也可直接查看演示案例。"
   ],
   [
     "Agent autonomy: generate, evaluate and repair within the recommended budget",
@@ -1489,40 +1381,8 @@ window.I18N_CATALOG = [
     "操作过于频繁，请稍后再试。"
   ],
   [
-    "The trial is not available yet. Please contact the project author.",
-    "体验暂未开放，请联系作品作者。"
-  ],
-  [
-    "AI trial usage limit reached. You can still view existing content and demo examples.",
-    "AI 体验次数已用完，你仍可查看已有内容和演示案例。"
-  ],
-  [
     "Please choose a video duration of 4–15 seconds.",
     "请选择 4–15 秒的视频时长。"
-  ],
-  [
-    "Video generation is not configured yet. Please contact the project author.",
-    "视频生成暂未配置，请联系作品作者。"
-  ],
-  [
-    "The generation result is not yet confirmed. Allowance remains reserved; please contact the project author before retrying.",
-    "生成结果暂未确认，额度暂时预留，请联系作品作者确认后再试。"
-  ],
-  [
-    "The generation request was rejected. No allowance was deducted; contact the project author or try again later.",
-    "生成请求未被接受，本次未扣除额度，请联系作品作者或稍后重试。"
-  ],
-  [
-    "Video generated. This used §0§ seconds; video allowance remaining: §1§ seconds.",
-    "视频已生成，本次使用 §0§ 秒，剩余视频额度 §1§ 秒。"
-  ],
-  [
-    "Video generation failed. No allowance was deducted; video allowance remaining: §0§ seconds.",
-    "视频生成失败，本次未扣除额度，剩余视频额度 §0§ 秒。"
-  ],
-  [
-    "The video was generated, but the file is temporarily unavailable. Video allowance remaining: §0§ seconds.",
-    "视频已生成，但暂时无法获取文件，剩余视频额度 §0§ 秒。"
   ],
   [
     "Invalid request origin.",
@@ -1593,7 +1453,7 @@ window.I18N_CATALOG = [
     "当前在线规划暂不可用，已根据创作需求生成备用方案。"
   ],
   [
-    "You can still view generated videos and demo examples.",
-    "你仍可查看已生成的视频和演示案例。"
+    "Video generation is not configured. Check your local model settings.",
+    "视频生成尚未配置，请检查本地模型设置。"
   ]
 ];

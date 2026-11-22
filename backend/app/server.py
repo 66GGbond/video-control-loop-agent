@@ -20,9 +20,8 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib import request as urllib_request
-from urllib.error import HTTPError
 
-from .access import TrialStore, AccessError
+from .sessions import SessionStore
 from .agent.planner import DeepSeekControlPlanner
 from .agent.context import ContextEnrichmentAgent
 from .agent.generation_spec import validate_brief_duration
@@ -55,14 +54,14 @@ def load_local_env(path: Path) -> None:
             "DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "DEEPSEEK_API_BASE_URL", "ARK_API_KEY", "ARK_VISION_MODEL",
             "ARK_VIDEO_TEXT_MODEL", "ARK_VIDEO_REFERENCE_MODEL", "VIDEO_PROVIDER",
             "MINIMAX_API_KEY", "MINIMAX_VIDEO_MODEL", "MINIMAX_VIDEO_RESOLUTION", "MINIMAX_API_BASE_URL",
-            "TRIAL_CODES", "TRIAL_AI_CALL_LIMIT", "COOKIE_SECURE", "HOST", "PORT", "TRUST_PROXY",
+            "PORT",
         } and value.strip():
             os.environ.setdefault(key, value.strip())
 
 
 if os.getenv("VIDEO_AGENT_SKIP_LOCAL_ENV") != "1":
     load_local_env(ROOT / ".env")
-TRIAL = TrialStore(RUNTIME)
+SESSIONS = SessionStore(RUNTIME)
 VISITOR_LOCKS = [threading.RLock() for _ in range(128)]
 ORCHESTRATOR = create_orchestrator()
 CONTROL_PLANNER = DeepSeekControlPlanner()
@@ -147,10 +146,12 @@ def visitor_request(method):
             cookie.load(self.headers.get("Cookie", ""))
         except Exception:
             pass
-        self.visitor_id, self.visitor_cookie = TRIAL.visitor(cookie["trial_visitor"].value if "trial_visitor" in cookie else "")
+        self.visitor_id, self.visitor_cookie = SESSIONS.visitor(cookie["agent_session"].value if "agent_session" in cookie else cookie["trial_visitor"].value if "trial_visitor" in cookie else "")
         lock = VISITOR_LOCKS[int(hashlib.sha256(self.visitor_id.encode()).hexdigest(), 16) % len(VISITOR_LOCKS)]
         with lock:
-            self.state = TRIAL.load(self.visitor_id) or create_empty_state()
+            self.state = SESSIONS.load(self.visitor_id) or create_empty_state()
+            if urlparse("http://" + self.headers.get("Host", "")).hostname not in {"localhost", "127.0.0.1", "::1"}:
+                return self._json(403, {"error": "This application is available locally only."})
             # Same-origin JSON requests only; reject cross-site form/fetch submissions.
             if self.command == "POST":
                 origin = self.headers.get("Origin")
@@ -161,7 +162,7 @@ def visitor_request(method):
             try:
                 return method(self)
             finally:
-                TRIAL.save(self.visitor_id, self.state)
+                SESSIONS.save(self.visitor_id, self.state)
     return wrapped
 
 
@@ -182,32 +183,8 @@ class DemoHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         try:
-            if path == "/api/trial/verify":
-                TRIAL.limit_rate("verify-visitor:" + self.visitor_id, 10)
-                TRIAL.limit_rate("verify-ip:" + TRIAL.digest(self._client_ip()), 30, 3600)
-                trial = TRIAL.verify(self.visitor_id, self._read_json().get("code"))
-                return self._json(HTTPStatus.OK, {"trial": trial})
-            if path == "/api/demo":
-                from .demo import create_demo_state
-                from .agent.orchestrator import AgentOrchestrator
-                from .agent.planner import FixturePlanner
-                from .tools.evaluator import FixtureVisionEvaluator
-                if self.state.status == "generating_video":
-                    raise AccessError("视频生成中，请等待生成结果。", 409, "generation_pending")
-                self.state = create_demo_state()
-                self.state.demo_mode = True
-                agent = AgentOrchestrator(FixtureVisionEvaluator(), FixturePlanner(), prompt_compiler=PromptCompiler())
-                agent.run_once(self.state)
-                agent.simulate_repaired_upload(self.state)
-                agent.run_once(self.state)
-                return self._json(HTTPStatus.OK, present(self.state))
-            paid_paths = {"/api/create-project", "/api/confirm-context", "/api/revise-brief", "/api/generate-video", "/api/run-loop", "/api/update-budget"}
-            if path not in {"/api/reset"}:
-                TRIAL.require(self.visitor_id, paid=path in paid_paths)
-            if path in paid_paths:
-                TRIAL.limit_rate("ai-ip:" + TRIAL.digest(self._client_ip()), 60, 3600)
             if path in {"/api/create-project", "/api/reset"} and self.state.status == "generating_video":
-                raise AccessError("视频生成中，请等待生成结果。", 409, "generation_pending")
+                return self._json(HTTPStatus.CONFLICT, {"error": "A video is being generated. Please wait for the result."})
             if path == "/api/create-project":
                 payload = self._read_json()
                 prompt = str(payload.get("prompt", "")).strip()
@@ -338,22 +315,15 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 version_id = "v1" if self.state.current_version_id == "none" else self._next_version_id(self.state.current_version_id)
                 PROMPT_COMPILER.compile(self.state, self.state.latest_repair_task if repairing else None, version_id)
                 if not VIDEO_GENERATOR.available():
-                    raise ValueError("视频生成暂未配置，请联系作品作者。")
+                    raise ValueError("Video generation is not configured. Check your local model settings.")
                 selection = VIDEO_GENERATOR.select_tool(self.state)
                 if selection.get("request_mode") == "unavailable":
                     raise ValueError(selection["reason"])
-                # Reserve before network I/O. Uncertain submission outcomes remain held
-                # for operator reconciliation; never retry a possibly paid task blindly.
-                reservation = TRIAL.reserve(self.visitor_id, self.state.creative_spec.generation_spec["duration_seconds"])
                 try:
                     job = VIDEO_GENERATOR.submit(self.state, version_id, self.state.latest_repair_task if repairing else None)
-                except (ValueError, OSError) as exc:
-                    cause = exc if isinstance(exc, HTTPError) else exc.__cause__
-                    if isinstance(cause, HTTPError) and cause.code in {400, 401, 402, 403, 404, 405, 413, 415, 422, 429}:
-                        TRIAL.release(reservation)
-                        raise AccessError("生成请求未被接受，本次未扣除额度，请联系作品作者或稍后重试。", 502, "submission_rejected") from exc
-                    raise AccessError("生成结果暂未确认，额度暂时预留，请联系作品作者确认后再试。", 503, "submission_uncertain") from exc
-                TRIAL.attach(reservation, job.job_id)
+                except (ValueError, OSError):
+                    self.state.autopilot_paused = True
+                    raise
                 self.state.generation_jobs.append(job)
                 review = next((item for item in self.state.version_reviews if item.version_id == version_id), None)
                 if not review:
@@ -435,11 +405,6 @@ class DemoHandler(SimpleHTTPRequestHandler):
                         review.status = "generating"
                     return self._json(HTTPStatus.OK, present(self.state))
                 if job.status == "succeeded":
-                    used = TRIAL.settle(self.visitor_id, job.job_id, True)
-                    remaining = TRIAL.status(self.visitor_id)["remaining_seconds"]
-                    self.trial_notice = f"视频已生成，本次使用 {used:g} 秒，剩余视频额度 {remaining:g} 秒。"
-                    if remaining == 0:
-                        self.trial_notice += "体验码的视频额度已用完，感谢体验。你仍可查看已生成的视频和演示案例。"
                     if not job.output_video_url:
                         job.status = "failed"
                         job.error = "The video provider completed the task without a downloadable video URL"
@@ -617,33 +582,18 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "Upload or generate a first video version before evaluation"})
                 ORCHESTRATOR.run_once(self.state)
                 return self._json(HTTPStatus.OK, present(self.state))
-            if path == "/api/simulate-repair":
-                ORCHESTRATOR.simulate_repaired_upload(self.state)
-                return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/reset":
                 self.state = create_empty_state()
                 return self._json(HTTPStatus.OK, present(self.state))
             return self._json(HTTPStatus.NOT_FOUND, {"error": "Unknown endpoint"})
-        except AccessError as exc:
-            if exc.code in {"quota_exhausted", "submission_uncertain", "ai_limit"}:
-                self.state.autopilot_paused = True
-            return self._json(exc.status, {"error": str(exc), "code": exc.code})
         except ValueError as exc:
             return self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
-
-    def _client_ip(self):
-        # Only enable behind a proxy that overwrites this header; app port must
-        # remain private. Compose's Caddy configuration does both.
-        if os.getenv("TRUST_PROXY") == "1":
-            return self.headers.get("X-Trial-Client-IP", self.client_address[0])
-        return self.client_address[0]
 
     def end_headers(self):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "same-origin")
         if hasattr(self, "visitor_cookie"):
-            secure = "; Secure" if os.getenv("COOKIE_SECURE") == "1" else ""
-            self.send_header("Set-Cookie", f"trial_visitor={self.visitor_cookie}; Path=/; HttpOnly; SameSite=Lax; Max-Age=315360000{secure}")
+            self.send_header("Set-Cookie", f"agent_session={self.visitor_cookie}; Path=/; HttpOnly; SameSite=Lax; Max-Age=315360000")
             self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
@@ -653,10 +603,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
 
     def _json(self, status: HTTPStatus, data: dict):
         if hasattr(self, "visitor_id"):
-            TRIAL.save(self.visitor_id, self.state)
-            data["trial"] = TRIAL.status(self.visitor_id)
-            if getattr(self, "trial_notice", None):
-                data["trial_notice"] = self.trial_notice
+            SESSIONS.save(self.visitor_id, self.state)
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -712,11 +659,6 @@ class DemoHandler(SimpleHTTPRequestHandler):
 
     def _generation_failed(self, job, review):
         """End a failed local handoff without silently resubmitting a paid job."""
-        # A local download failure after provider success is still a used generation.
-        if job.status in {"failed", "canceled", "cancelled"}:
-            released = TRIAL.settle(self.visitor_id, job.job_id, False)
-            remaining = TRIAL.status(self.visitor_id)["remaining_seconds"]
-            self.trial_notice = (f"视频生成失败，本次未扣除额度，剩余视频额度 {remaining:g} 秒。" if released else f"视频已生成，但暂时无法获取文件，剩余视频额度 {remaining:g} 秒。")
         self.state.status = "awaiting_repair_upload" if job.version_id != "v1" else "awaiting_first_video"
         error = job.error or "Video generation failed or was canceled."
         if review:
@@ -922,12 +864,8 @@ class DemoHandler(SimpleHTTPRequestHandler):
 
 
 def run(port: int | None = None):
-    codes = os.getenv("TRIAL_CODES", "").split(",")
-    if any(code.strip() and (len(code.strip()) != 4 or not code.strip().isascii() or not code.strip().isdigit()) for code in codes):
-        raise ValueError("TRIAL_CODES must contain four-digit codes")
     port = port or int(os.getenv("PORT", "8000"))
-    host = os.getenv("HOST", "127.0.0.1")
-    server = ThreadingHTTPServer((host, port), DemoHandler)
+    server = ThreadingHTTPServer(("127.0.0.1", port), DemoHandler)
     print(f"Video Control Loop Agent running at http://127.0.0.1:{port}")
     try:
         server.serve_forever()
