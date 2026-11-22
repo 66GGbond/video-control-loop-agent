@@ -825,7 +825,6 @@ function renderCreativeAgent(state, spec, enrichedContext) {
   const briefMessage = document.querySelector("#agent-user-brief");
   const contextResult = document.querySelector("#agent-context-result");
   const question = document.querySelector("#context-confirmation");
-  const statePill = document.querySelector("#creative-agent-state");
   briefMessage.hidden = !hasBrief || Boolean(state.conversation?.length);
   if (hasBrief) {
     document.querySelector("#agent-user-brief-text").textContent = prompt;
@@ -863,7 +862,6 @@ function renderCreativeAgent(state, spec, enrichedContext) {
   } else {
     intro.textContent = "I am preparing the project context from the brief and available assets.";
   }
-  statePill.textContent = state.status === "awaiting_context_confirmation" ? "Needs input" : state.status === "needs_segmentation" ? "Split needed" : hasPlan ? "Plan ready" : hasBrief ? "Working" : "Ready";
   const isInitialBrief = state.status === "ready_for_brief";
   const composerLabel = document.querySelector("#creative-prompt-label");
   const composer = document.querySelector("#creative-prompt");
@@ -1768,9 +1766,8 @@ document.querySelector("#reset").addEventListener("click", async () => {
     generatedEvidencePending = false;
     setEditorText("");
     document.querySelector("#target-market").value = "";
-    document.querySelector("#creative-agent").classList.remove("collapsed");
-
     render(await endpoint("/api/reset", { method: "POST" }));
+    setCreativeAgentOpen(false);
   } catch (error) { I18n.alert(error.message); }
 });
 

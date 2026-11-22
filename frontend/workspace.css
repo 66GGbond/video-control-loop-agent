@@ -17,7 +17,6 @@ body main#vcl-workspace {width:auto;max-width:none;min-height:100dvh;margin:0 au
 /* A floating conversation, independent of either workspace's geometry. */
 .creative-agent {z-index:42;top:16px;right:20px;bottom:16px;width:var(--agent-width);height:calc(100dvh - 32px);max-height:calc(100dvh - 32px);border:1px solid #c4b4e029;border-radius:18px;background:linear-gradient(150deg,#221c30d9,#15111fdf);backdrop-filter:blur(28px) saturate(115%);box-shadow:0 16px 48px #0005,inset 0 1px #ffffff09;}
 .creative-agent-header {background:transparent;border-bottom-color:#ffffff09;}
-.creative-agent-header .pill {border:0;background:#b594ff0c;color:#ac99cb;font-size:9px;font-weight:600;letter-spacing:0;text-transform:none;}
 .creative-agent .agent-message {border-color:#bda9df12;background:#bda9df06;}
 .creative-agent .agent-message-user {border-color:#bda9df20;background:#8858d618;}
 .creative-agent .agent-message:has(#agent-intro) {padding:0;border:0;background:transparent;}
