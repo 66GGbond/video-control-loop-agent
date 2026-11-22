@@ -1,4 +1,5 @@
 import http.client
+import hashlib
 import json
 import sqlite3
 import threading
@@ -50,7 +51,10 @@ class LocalServerTests(unittest.TestCase):
     def plan(self, visitor):
         state = create_demo_state("A cat resting on a sofa for 15 seconds.")
         state.status, state.current_version_id = "awaiting_first_video", "none"
-        self.store.save(visitor, state)
+        # Match request serialization: an earlier response may still be finishing.
+        lock = server.VISITOR_LOCKS[int(hashlib.sha256(visitor.encode()).hexdigest(), 16) % len(server.VISITOR_LOCKS)]
+        with lock:
+            self.store.save(visitor, state)
 
     def test_planning_has_no_trial_gate(self):
         state = create_demo_state()
@@ -60,6 +64,46 @@ class LocalServerTests(unittest.TestCase):
         planner.assert_called_once()
         self.assertNotIn("trial", data)
         self.assertNotIn("demo_mode", data)
+
+    def test_submitted_conversation_survives_replan_refresh_and_reset(self):
+        def plan(prompt, *args, **kwargs):
+            state = create_demo_state(prompt)
+            state.status, state.current_version_id = "planning_ready", "none"
+            return state
+
+        with patch.object(server, "create_enriched_project_state", side_effect=plan):
+            _, first = self.request("/api/create-project", {"prompt": "A tea advertisement."})
+            status, revised = self.request("/api/revise-brief", {"instruction": "Use warm light."})
+        self.assertEqual(status, 200)
+        self.assertEqual(revised["conversation"][:2], first["conversation"])
+        self.assertEqual([m["text"] for m in revised["conversation"] if m["role"] == "user"], ["A tea advertisement.", "Use warm light."])
+        self.assertEqual(self.request("/api/state")[1]["conversation"], revised["conversation"])
+        self.assertEqual(self.request("/api/reset", {})[1]["conversation"], [])
+
+    def test_context_confirmation_retains_earlier_question_and_brief(self):
+        initial = create_demo_state("A seasonal tea advertisement.")
+        initial.status = "awaiting_context_confirmation"
+        initial.creative_spec.enriched_context["open_questions"] = [{"question": "Which region?", "blocking": True}]
+        ready = create_demo_state(initial.creative_spec.source_prompt)
+        ready.status = "planning_ready"
+        with patch.object(server, "create_enriched_project_state", side_effect=[initial, ready]):
+            _, first = self.request("/api/create-project", {"prompt": initial.creative_spec.source_prompt})
+            status, confirmed = self.request("/api/confirm-context", {"target_market": "Singapore"})
+        self.assertEqual(status, 200)
+        self.assertEqual(first["conversation"][-1]["text"], "Which region?")
+        self.assertEqual(confirmed["conversation"][:2], first["conversation"])
+        self.assertEqual(confirmed["conversation"][2]["text"], "Singapore")
+
+    def test_legacy_pending_direction_does_not_duplicate_the_new_message(self):
+        visitor = self.session()
+        state = create_demo_state("A tea advertisement.")
+        state.status = "ready_for_evaluation"
+        lock = server.VISITOR_LOCKS[int(hashlib.sha256(visitor.encode()).hexdigest(), 16) % len(server.VISITOR_LOCKS)]
+        with lock:
+            self.store.save(visitor, state)
+        status, updated = self.request("/api/revise-brief", {"instruction": "Keep the label clear."})
+        self.assertEqual(status, 200)
+        self.assertEqual([m["text"] for m in updated["conversation"] if m["role"] == "user"], ["A tea advertisement.", "Keep the label clear."])
 
     def test_more_than_thirty_seconds_can_generate_without_codes(self):
         visitor = self.session()

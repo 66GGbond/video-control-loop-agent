@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from .conversation import messages
 from .agent.orchestrator import AgentOrchestrator
 from .agent.context import ContextEnrichmentAgent
 from .agent.asset_manifest import build_asset_manifest
@@ -278,6 +279,7 @@ def create_orchestrator() -> AgentOrchestrator:
 def present(state: ProjectState) -> dict:
     """A UI-safe projection. Full state remains serialisable for future persistence."""
     state_json = to_jsonable(state)
+    state_json["conversation"] = messages(state)
     # Frame files are local-only evaluator inputs; never expose filesystem paths to the browser.
     state_json.pop("evaluation_frame_records", None)
     for review in state_json.get("version_reviews", []):

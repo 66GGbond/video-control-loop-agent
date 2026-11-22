@@ -14,6 +14,7 @@ import uuid
 import threading
 import hashlib
 from functools import wraps
+from copy import copy
 from http.cookies import SimpleCookie
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -22,6 +23,7 @@ from urllib.parse import urlparse
 from urllib import request as urllib_request
 
 from .sessions import SessionStore
+from .conversation import record_exchange
 from .agent.planner import ArkControlPlanner
 from .agent.context import ContextEnrichmentAgent
 from .agent.generation_spec import validate_brief_duration
@@ -107,6 +109,7 @@ def start_user_directed_revision(original: ProjectState, instruction: str) -> Pr
     revised.version_reviews = original.version_reviews
     revised.evaluation_history = original.evaluation_history
     revised.generation_jobs = original.generation_jobs
+    revised.conversation = original.conversation
     revised.latest_report = original.latest_report
     revised.continuity_memory = original.continuity_memory
     # Evidence for an evaluated version stays on disk for its review.  Clear
@@ -247,6 +250,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     prompt, reference_asset, CONTROL_PLANNER, CONTEXT_AGENT,
                     multimodal_assets=assets,
                 )
+                record_exchange(self.state, prompt)
                 return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/confirm-context":
                 if self.state.status != "awaiting_context_confirmation":
@@ -255,6 +259,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 target_market = str(payload.get("target_market", "")).strip()
                 if not target_market:
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "A target market or region is required for this seasonal request"})
+                original = self.state
                 self.state = create_enriched_project_state(
                     self.state.creative_spec.source_prompt,
                     self.state.creative_spec.reference_asset,
@@ -263,6 +268,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     target_market,
                     self.state.creative_spec.multimodal_assets,
                 )
+                record_exchange(self.state, target_market, original)
                 self.state.history.append({
                     "at": "local-demo",
                     "phase": "human_approval",
@@ -313,6 +319,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 instruction = str(payload.get("instruction", "")).strip()
                 if not instruction:
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "Enter a revision before sending it to the Agent"})
+                previous = copy(self.state)
                 if self.state.status in {"planning_ready", "awaiting_first_video", "awaiting_context_confirmation"}:
                     original = self.state
                     target_market = next(
@@ -329,6 +336,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                         target_market,
                         original.creative_spec.multimodal_assets,
                     )
+                    record_exchange(self.state, instruction, previous)
                     self.state.history = [*original.history, {
                         "at": "local-demo",
                         "phase": "human_approval",
@@ -338,6 +346,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     return self._json(HTTPStatus.OK, present(self.state))
                 if self.state.status == "published":
                     self.state = start_user_directed_revision(self.state, instruction)
+                    record_exchange(self.state, instruction, previous)
                     return self._json(HTTPStatus.OK, present(self.state))
                 if self.state.status == "awaiting_repair_upload" and self.state.latest_repair_task:
                     self.state.latest_repair_task.prompt += f" User-directed refinement: {instruction}"
@@ -345,6 +354,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     PROMPT_COMPILER.compile(self.state, self.state.latest_repair_task, self._next_version_id(self.state.current_version_id))
                 else:
                     self.state.pending_user_direction = instruction
+                record_exchange(self.state, instruction, previous, reply="Direction saved for the next eligible version.")
                 self.state.history.append({
                     "at": "local-demo",
                     "phase": "human_approval",

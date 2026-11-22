@@ -239,6 +239,8 @@ class ProjectState:
     execution_mode: str = "collaborative"
     autopilot_paused: bool = False
     pending_user_direction: str = ""
+    # Submitted conversation turns, independent of the changing active plan.
+    conversation: List[Dict[str, Any]] = field(default_factory=list)
 
 
 def to_jsonable(value: Any) -> Any:

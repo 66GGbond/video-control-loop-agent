@@ -1795,4 +1795,6 @@ window.I18N_CATALOG = [
   , ["Draft saved automatically", "草稿已自动保存"]
   , ["Saving draft…", "草稿保存中…"]
   , ["Draft save interrupted. Retrying automatically.", "草稿保存中断，正在自动重试。"]
+  , ["Conversation history", "聊天记录"]
+  , ["You", "你"]
 ];

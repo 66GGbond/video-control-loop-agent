@@ -796,7 +796,28 @@ function renderExecutionTrace(state) {
     : `<li class="trace-empty"><div><strong>Awaiting a creative brief</strong><p>The execution trace begins only after the Agent receives a brief.</p></div></li>`;
 }
 
+let renderedConversation = "";
+function renderConversation(state) {
+  const log=document.querySelector("#agent-conversation"), feed=document.querySelector("#creative-agent-feed");
+  const messages=state.conversation || [], signature=JSON.stringify(messages);
+  if(signature===renderedConversation)return;
+  const follow=feed.scrollHeight-feed.scrollTop-feed.clientHeight<48, scroll=feed.scrollTop;
+  const first=renderedConversation==="";
+  renderedConversation=signature;
+  log.replaceChildren();
+  for(const message of messages) {
+    const article=document.createElement("article"),label=document.createElement("span"),text=document.createElement("p");
+    article.className="agent-message agent-message-"+(message.role==="user"?"user":"system");
+    label.className="agent-message-label";label.textContent=message.role==="user"?"You":"Creative Agent";
+    text.setAttribute("translate","no");text.textContent=message.text;
+    article.append(label,text);log.append(article);
+  }
+  log.hidden=!messages.length;
+  requestAnimationFrame(()=>{feed.scrollTop=follow||first?feed.scrollHeight:scroll;});
+}
+
 function renderCreativeAgent(state, spec, enrichedContext) {
+  renderConversation(state);
   const prompt = spec.source_prompt || spec.goal || "";
   const hasBrief = Boolean(prompt);
   const hasPlan = Boolean(spec.shots?.length);
@@ -805,7 +826,7 @@ function renderCreativeAgent(state, spec, enrichedContext) {
   const contextResult = document.querySelector("#agent-context-result");
   const question = document.querySelector("#context-confirmation");
   const statePill = document.querySelector("#creative-agent-state");
-  briefMessage.hidden = !hasBrief;
+  briefMessage.hidden = !hasBrief || Boolean(state.conversation?.length);
   if (hasBrief) {
     document.querySelector("#agent-user-brief-text").textContent = prompt;
     const referenceNote = document.querySelector("#agent-reference-note");
@@ -1565,7 +1586,8 @@ function setCreativeAgentOpen(open, focus = false) {
   if (panel.classList.contains("collapsed") === open) panel.classList.toggle("collapsed", !open);
   panel.inert=!open;
   document.body.classList.toggle("agent-open", open);
-  capsule.hidden=false;
+  capsule.hidden=open;
+  document.querySelector('.canvas-header-actions').inert=open;
   capsule.setAttribute("aria-expanded", String(open));
   capsule.setAttribute("aria-label", open ? "Minimize Creative Agent" : "Open Creative Agent");
   if (focus && open) requestAnimationFrame(()=>promptEditor().focus());
@@ -1752,15 +1774,6 @@ document.querySelector("#reset").addEventListener("click", async () => {
   } catch (error) { I18n.alert(error.message); }
 });
 
-// Keep the project overview reachable on narrow screens.
-const compactLayout = window.matchMedia("(max-width: 1259px)");
-function collapseCompactAgent() {
-  if (!compactLayout.matches) return;
-  document.querySelector("#creative-agent").classList.add("collapsed");
-
-}
-compactLayout.addEventListener("change", collapseCompactAgent);
-collapseCompactAgent();
 refresh();
 
 window.addEventListener("languagechange", () => {
