@@ -58,11 +58,14 @@ class CanvasHTTPTests(unittest.TestCase):
         self.cookie='';self.assertEqual(self.request('/api/canvas')[1]['document']['nodes'],[])
         self.cookie=first_cookie;self.assertEqual(self.request('/api/canvas')[1]['document'],doc)
 
-    def test_canvas_survives_project_reset_and_does_not_submit_models(self):
+    def test_canvas_is_archived_on_new_project_and_does_not_submit_models(self):
         from unittest.mock import patch
         doc=empty_canvas();doc['nodes']=[node('a')]
         with patch.object(local.server.VIDEO_GENERATOR,'submit') as submit:
-            self.request('/api/canvas',{'revision':0,'document':doc});self.request('/api/reset',{})
+            self.request('/api/canvas',{'revision':0,'document':doc})
+            project=self.request('/api/state')[1]['project_id'];self.request('/api/reset',{})
+            self.assertEqual(self.request('/api/canvas')[1]['document']['nodes'],[])
+            self.request('/api/projects/open',{'project_id':project})
             self.assertEqual(self.request('/api/canvas')[1]['document'],doc)
             submit.assert_not_called()
 

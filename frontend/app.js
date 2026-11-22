@@ -1,7 +1,7 @@
 const endpoint = async (path, options = {}) => {
   const response = await fetch(path, {
     ...options,
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers: { "Content-Type": "application/json", ...(renderedState?.project_id?{"X-Project-ID":renderedState.project_id}:{}), ...(options.headers || {}) },
   });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || "Request failed. Please try again later.");
@@ -1666,6 +1666,7 @@ function autopilotIsRunning(state) {
 }
 
 async function advanceAutopilot(state) {
+  if(location.hash==='#history'||document.body.dataset.workspace==='history')return;
   if (!autopilotIsRunning(state) || autopilotAdvancePending) return;
   if (!["awaiting_first_video", "awaiting_repair_upload", "ready_for_evaluation", "repair_uploaded"].includes(state.status)) return;
   autopilotAdvancePending = true;
@@ -1723,6 +1724,7 @@ document.querySelector("#generate-repair").addEventListener("click", event => {
 });
 document.querySelector("#reset").addEventListener("click", async () => {
   try {
+    await window.CanvasImages.flush();
     clearReferenceAttachments();
     if (generationPollTimer) window.clearTimeout(generationPollTimer);
     generationPollTimer = null;

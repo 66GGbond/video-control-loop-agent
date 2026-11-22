@@ -67,6 +67,7 @@ SESSIONS = SessionStore(RUNTIME)
 from .image_tasks import ImageTasks
 from . import character_references as characters
 from .generation_settings import configure as configure_generation
+from .projects import Projects
 VISITOR_LOCKS = [threading.RLock() for _ in range(128)]
 ORCHESTRATOR = create_orchestrator()
 CONTROL_PLANNER = ArkControlPlanner()
@@ -166,6 +167,10 @@ def visitor_request(method):
                     return self._json(403, {"error": "请求来源无效。"})
                 if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
                     return self._json(415, {"error": "请使用 JSON 请求。"})
+            expected = self.headers.get('X-Project-ID')
+            if expected and expected != self.state.project_id and urlparse(self.path).path not in {'/api/projects','/api/projects/open','/api/projects/rename','/api/project-titles'}:
+                return self._json(HTTPStatus.CONFLICT, {'error': '当前项目已在其他页面切换，请刷新后继续。'})
+            SESSIONS.save(self.visitor_id, self.state)
             try:
                 return method(self)
             finally:
@@ -180,6 +185,13 @@ class DemoHandler(SimpleHTTPRequestHandler):
     @visitor_request
     def do_GET(self):
         path = urlparse(self.path).path
+        if path == '/api/projects':
+            return self._json(HTTPStatus.OK, Projects(SESSIONS).list(self.visitor_id))
+        if path.startswith('/api/project-preview/'):
+            result = Projects(SESSIONS).image(self.visitor_id, path.rsplit('/',1)[-1])
+            if not result:
+                return self._json(HTTPStatus.NOT_FOUND, {'error':'Project preview unavailable'})
+            self.send_response(HTTPStatus.OK);self.send_header('Content-Type',result[0]);self.send_header('Content-Length',str(len(result[1])));self.send_header('Cache-Control','private, no-cache');self.end_headers();self.wfile.write(result[1]);return
         if path == "/api/state":
             return self._json(HTTPStatus.OK, present(self.state))
         if path == "/api/character-references":
@@ -188,11 +200,18 @@ class DemoHandler(SimpleHTTPRequestHandler):
         if path == "/api/canvas":
             return self._json(HTTPStatus.OK, SESSIONS.load_canvas(self.visitor_id))
         if path.startswith('/api/image-task/'):
-            return self._json(HTTPStatus.OK, ImageTasks(SESSIONS).get(self.visitor_id,path.rsplit('/',1)[-1]))
+            return self._json(HTTPStatus.OK, ImageTasks(SESSIONS,self.state.project_id).get(self.visitor_id,path.rsplit('/',1)[-1]))
         if path == '/api/image-results':
             with SESSIONS.connect() as db:
-                rows=db.execute('SELECT id FROM image_outputs WHERE visitor_id=? ORDER BY rowid DESC',(self.visitor_id,)).fetchall()
-            return self._json(HTTPStatus.OK, {'results':[{'run_id':r[0], 'name':'Seedream '+r[0][:8]} for r in rows]})
+                tasks=db.execute('SELECT node_id,data FROM image_tasks WHERE visitor_id=?',(self.visitor_id,)).fetchall()
+                ids={r[0] for r in db.execute('SELECT id FROM image_outputs WHERE visitor_id=?',(self.visitor_id,))}
+            character_tasks={p.get('task_id') for p in self.state.creative_spec.character_reference_plan.get('characters',[])}
+            results=[]
+            for row in reversed(tasks):
+                job=json.loads(row['data']);run=job.get('run_id')
+                if (row['node_id'].startswith(self.state.project_id+':') or row['node_id'] in character_tasks) and run in ids and job.get('status')=='succeeded':
+                    results.append({'run_id':run,'name':'Seedream '+run[:8]})
+            return self._json(HTTPStatus.OK, {'results':results})
         if path.startswith('/api/image-output/'):
             result=ImageTasks(SESSIONS).output(self.visitor_id,path.rsplit('/',1)[-1])
             if not result:return self._json(HTTPStatus.NOT_FOUND,{'error':'Image unavailable'})
@@ -205,6 +224,20 @@ class DemoHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         try:
+            if path == '/api/projects/workspace':
+                Projects(SESSIONS).workspace(self.visitor_id,self.state.project_id,self._read_json().get('workspace'))
+                return self._json(HTTPStatus.OK, {'saved':True})
+            if path == '/api/project-titles':
+                payload = self._read_json()
+                return self._json(HTTPStatus.OK, Projects(SESSIONS).start_naming(self.visitor_id, payload.get('language','zh')))
+            if path == '/api/projects/rename':
+                payload = self._read_json()
+                Projects(SESSIONS).rename(self.visitor_id,payload.get('project_id'),payload.get('title'))
+                return self._json(HTTPStatus.OK, Projects(SESSIONS).list(self.visitor_id))
+            if path == '/api/projects/open':
+                payload = self._read_json()
+                self.state, workspace = Projects(SESSIONS).open(self.visitor_id,payload.get('project_id'))
+                return self._json(HTTPStatus.OK, {'project_id':self.state.project_id,'workspace':workspace})
             if path in {'/api/create-project', '/api/reset', '/api/revise-brief', '/api/confirm-context'} and characters.running(self.state, SESSIONS, self.visitor_id):
                 return self._json(HTTPStatus.CONFLICT, {'error': '人物四视图正在生成，请等待结果后再修改或重置项目。'})
             if path == '/api/attach-character-references':
@@ -225,7 +258,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
             if path in {'/api/recommend-image-model','/api/generate-image'}:
                 payload=self._read_json();node=payload.get('node_id')
                 if not isinstance(node,str):raise ValueError('Select an image task')
-                document=SESSIONS.load_canvas(self.visitor_id)['document'];service=ImageTasks(SESSIONS)
+                document=SESSIONS.load_canvas(self.visitor_id)['document'];service=ImageTasks(SESSIONS,self.state.project_id)
                 if path=='/api/recommend-image-model':result=service.recommend(self.visitor_id,node,document)
                 else:result=service.start(self.visitor_id,node,document,payload.get('choice_id'),payload.get('model_id'))
                 return self._json(HTTPStatus.ACCEPTED if result.get('status')=='running' else HTTPStatus.OK,result)
@@ -269,11 +302,16 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 validate_brief_duration(prompt)
                 assets = self._normalise_multimodal_assets(payload)
                 reference_asset = next((asset for asset in assets if asset["media_type"] == "image"), None)
+                previous = self.state
                 self.state = create_enriched_project_state(
                     prompt, reference_asset, CONTROL_PLANNER, CONTEXT_AGENT,
                     multimodal_assets=assets,
                     ui_language=payload.get("language", "zh"),
                 )
+                if previous.status == 'ready_for_brief':
+                    self.state.project_id = previous.project_id
+                else:
+                    SESSIONS.clear_canvas(self.visitor_id)
                 record_exchange(self.state, prompt)
                 return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/confirm-context":
@@ -293,6 +331,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     characters.source_assets(self.state.creative_spec),
                     ui_language=payload.get("language", original.creative_spec.enriched_context.get("ui_language", "zh")),
                 )
+                self.state.project_id = original.project_id
                 record_exchange(self.state, target_market, original)
                 self.state.history.append({
                     "at": "local-demo",
@@ -362,6 +401,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                         characters.source_assets(original.creative_spec),
                         ui_language=payload.get("language", original.creative_spec.enriched_context.get("ui_language", "zh")),
                     )
+                    self.state.project_id = original.project_id
                     record_exchange(self.state, instruction, previous)
                     self.state.history = [*original.history, {
                         "at": "local-demo",
@@ -671,6 +711,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 ORCHESTRATOR.run_once(self.state)
                 return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/reset":
+                SESSIONS.clear_canvas(self.visitor_id)
                 self.state = create_empty_state()
                 return self._json(HTTPStatus.OK, present(self.state))
             return self._json(HTTPStatus.NOT_FOUND, {"error": "Unknown endpoint"})
@@ -965,6 +1006,8 @@ def run(port: int | None = None):
     port = port or int(os.getenv("PORT", "8000"))
     server = ThreadingHTTPServer(("127.0.0.1", port), DemoHandler)
     ImageTasks(SESSIONS).recover()
+    with SESSIONS.connect() as db:
+        db.execute("UPDATE projects SET title_source='pending' WHERE title_source='naming'")
     print(f"Video Control Loop Agent running at http://127.0.0.1:{port}")
     try:
         server.serve_forever()

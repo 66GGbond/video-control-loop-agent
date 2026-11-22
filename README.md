@@ -123,3 +123,7 @@ Seedance 2.5、Seedance 2.0 与 MiniMax H3 已接入模型卡片与运行时选�
 ## Canvas workspace
 
 [Local canvas and global Creative Agent](docs/canvas.md): node editing, reference connections, saved boards and the existing generation/quality loop.
+
+## 历史项目
+
+左侧历史项目支持图片或视频帧预览、Agent 自动生成 10 字以内标题、手动改名和恢复继续编辑。重置或新建时保留原项目；聊天、脚本、参数、素材、视频版本与画布按项目保存。详见 [历史项目](docs/project-history.md)。

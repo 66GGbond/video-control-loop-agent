@@ -2,7 +2,7 @@
 window.CanvasImages=(()=>{
   const states=new Map(),selected=new Map(),pending=new Set(),polls=new Map();let host;
   const api=async(path,body)=>{
-    const response=await fetch(path,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const response=await fetch(path,{headers:{'Content-Type':'application/json','X-Project-ID':window.VCLBridge.state()?.project_id||''},...(body===undefined?{}:{method:'POST',body:JSON.stringify(body)})});
     const data=await response.json();if(!response.ok)throw new Error(data.error||'Image request failed');return data;
   };
   function controlsDisabled(id){return pending.has(id)||states.get(id)?.status==='running';}
@@ -63,5 +63,5 @@ window.CanvasImages=(()=>{
     }catch(error){host.notify(error.message);}
   }
   window.addEventListener('languagechange',()=>{if(host?.getDocument())host.render();});
-  return {mount:value=>host=value,decorate,restore,addLibraryItems};
+  return {mount:value=>host=value,decorate,restore,addLibraryItems,flush:()=>host?.flush(),reset(){for(const timer of polls.values())clearTimeout(timer);states.clear();selected.clear();pending.clear();polls.clear();}};
 })();

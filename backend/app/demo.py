@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from .conversation import messages
 from .agent.orchestrator import AgentOrchestrator
 from .agent.context import ContextEnrichmentAgent
@@ -63,7 +65,7 @@ def fallback_production_direction(shots: list[dict]) -> dict:
 def create_empty_state() -> ProjectState:
     """A reset returns the user to the Brief stage, never to a hidden sample project."""
     spec = CreativeSpec(goal="", source_prompt="", immutable_character_attributes=[], shots=[], max_iterations=0)
-    return ProjectState(project_id="new-control-plan", creative_spec=spec, current_version_id="none", status="ready_for_brief")
+    return ProjectState(project_id=uuid.uuid4().hex, creative_spec=spec, current_version_id="none", status="ready_for_brief")
 
 
 def create_demo_state(
@@ -156,7 +158,7 @@ def create_demo_state(
         planning_source="fallback",
         planning_notice="A local recovery plan was built from the submitted brief after the live planner could not return a valid plan. Review the brief-derived shots before approval.",
     )
-    state = ProjectState(project_id="control-plan", creative_spec=spec, current_version_id="none", status="planning_ready")
+    state = ProjectState(project_id=uuid.uuid4().hex, creative_spec=spec, current_version_id="none", status="planning_ready")
     return PromptCompiler().compile(state)
 
 
@@ -201,7 +203,7 @@ def create_project_state(
     if control_planner and control_planner.available():
         try:
             spec = control_planner.plan(prompt, reference_asset, enriched_context)
-            return finish(ProjectState(project_id="control-plan", creative_spec=spec, current_version_id="none", status="planning_ready"))
+            return finish(ProjectState(project_id=uuid.uuid4().hex, creative_spec=spec, current_version_id="none", status="planning_ready"))
         except (OSError, ValueError, KeyError, TypeError) as exc:
             fallback = create_demo_state(prompt, reference_asset, enriched_context, multimodal_assets)
             failure_kind = type(exc).__name__
@@ -251,7 +253,7 @@ def create_enriched_project_state(
             planning_source="context_enrichment",
             planning_notice="The Agent needs one confirmed context field before it can compile a reliable control plan.",
         )
-        state = ProjectState(project_id="context-enrichment", creative_spec=spec, current_version_id="none", status="awaiting_context_confirmation")
+        state = ProjectState(project_id=uuid.uuid4().hex, creative_spec=spec, current_version_id="none", status="awaiting_context_confirmation")
     else:
         state = create_project_state(prompt, reference_asset, control_planner, context, multimodal_assets)
     for observation in context.get("tool_observations", []):

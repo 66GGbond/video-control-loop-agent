@@ -7,7 +7,12 @@
   const kinds={text:'text',note:'note',image:'image',audio:'audio',video:'video',task:'task',image_task:'image-task',output:'video'};
   let doc=null,revision=0,loaded=false,loading=null,dirty=false,saving=false,saveTimer=null,changeId=0,saveError=false,saveBlocked=false,saveFailures=0;
   let selection=new Set(),selectedEdge=null,connecting=null,tool='select',showEdges=true,space=false,gesture=null,addPoint=null;
-  let undo=[],redo=[],toastTimer=null,textEditSnapshot=null,currentState=null;
+  let undo=[],redo=[],toastTimer=null,textEditSnapshot=null,currentState=window.VCLBridge.state(),lastWorkspaceRecord='';
+  function rememberWorkspace(){
+    const name=document.body.dataset.workspace,key=currentState?.project_id+':'+name;
+    if(!currentState||!['vcl','canvas'].includes(name)||lastWorkspaceRecord===key)return;
+    lastWorkspaceRecord=key;endpoint('/api/projects/workspace',{method:'POST',body:JSON.stringify({workspace:name})}).catch(()=>{lastWorkspaceRecord='';});
+  }
   const id=()=>`n_${crypto.randomUUID().replaceAll('-','')}`;
   function notify(text) {const el=$('workspace-toast');el.textContent=text;el.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.hidden=true,4300);}
   function status(value,message) {const el=$('canvas-save-status');el.dataset.state=value;el.title=message||({saved:'Draft saved automatically',saving:'Saving draft…',error:'Save failed. Export your draft before reloading.'}[value]);el.setAttribute('aria-label',el.title);}
@@ -17,7 +22,7 @@
     if(!doc||!dirty||saving||saveError)return;
     saving=true;const at=changeId;
     try {
-      const response=await fetch('/api/canvas',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision,document:doc})});
+      const response=await fetch('/api/canvas',{method:'POST',headers:{'Content-Type':'application/json','X-Project-ID':currentState?.project_id||''},body:JSON.stringify({revision,document:doc})});
       const data=await response.json();if(!response.ok){const error=new Error(data.error||'Save failed.');error.status=response.status;throw error;}
       revision=data.revision;saveFailures=0;
       if(at===changeId){dirty=false;status('saved');}
@@ -33,26 +38,38 @@
     if(loaded)return;
     if(loading)return loading;
     loading=(async()=>{
-      const response=await fetch('/api/canvas');if(!response.ok)throw new Error('Canvas could not be loaded.');
-      const data=await response.json();doc=data.document;revision=data.revision;loaded=true;status('saved');$('canvas-title').value=doc.title==='Untitled canvas'?'':doc.title;
+      const projectAtLoad=currentState?.project_id;
+      const response=await fetch('/api/canvas',{headers:{'X-Project-ID':projectAtLoad||''}});if(!response.ok)throw new Error('Canvas could not be loaded.');
+      const data=await response.json();if(projectAtLoad&&projectAtLoad!==currentState?.project_id)return;doc=data.document;revision=data.revision;loaded=true;status('saved');$('canvas-title').value=doc.title==='Untitled canvas'?'':doc.title;
       render();window.CanvasImages.restore();
     })().finally(()=>loading=null);
     return loading;
   }
   async function workspace(name,remember=true) {
-    name=name==='canvas'?'canvas':'vcl';document.body.dataset.workspace=name;
-    $('vcl-workspace').hidden=name!=='vcl';root.hidden=name!=='canvas';
+    name=['canvas','history'].includes(name)?name:'vcl';
+    if(name==='history') {
+      try{await window.CanvasImages.flush();}catch(error){notify(error.message);return;}
+      if(window.VCLBridge.state()?.execution_mode==='autopilot'&&!window.VCLBridge.state().autopilot_paused) {
+        try{render(await endpoint('/api/autopilot',{method:'POST',body:JSON.stringify({action:'pause'})}));}catch(error){notify(error.message);return;}
+      }
+      setCreativeAgentOpen(false);
+    }
+    document.body.dataset.workspace=name;
+    $('vcl-workspace').hidden=name!=='vcl';root.hidden=name!=='canvas';$('history-workspace').hidden=name!=='history';
     // Generation details belong to the main workspace; the float stays conversational.
     document.querySelectorAll('[data-workspace].nav-page').forEach(button=>{
       const active=button.dataset.workspace===name;button.classList.toggle('active',active);
       if(active)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current');
     });
-    if(remember){history.replaceState(null,'',name==='canvas'?'#canvas':'#vcl');}
+    if(remember){history.replaceState(null,'','#'+name);}
+    rememberWorkspace();
+    if(name!=='history'&&window.VCLBridge.state())scheduleProductionDefaults(window.VCLBridge.state());
+    if(name==='history')window.ProjectHistory.load();
     if(name==='canvas')try {await load();stage.focus({preventScroll:true});}catch(error){notify(error.message);}
   }
   document.querySelectorAll('.nav-page').forEach(button=>button.addEventListener('click',()=>workspace(button.dataset.workspace)));
   document.querySelector('.app-mark').addEventListener('click',()=>workspace('vcl'));
-  window.addEventListener('hashchange',()=>workspace(location.hash==='#canvas'?'canvas':'vcl',false));
+  window.addEventListener('hashchange',()=>workspace(location.hash.slice(1),false));
   function bounds(){return stage.getBoundingClientRect();}
   function local(event){const r=bounds();return {x:event.clientX-r.left,y:event.clientY-r.top};}
   function point(event){const p=local(event);return C.point(p.x,p.y,doc.viewport);}
@@ -355,7 +372,7 @@
       // The backend is the authority for imported schema/media, and revision prevents stale writes.
       if(saving||dirty)throw new Error('Wait for the canvas to save before importing.');
       if(!window.confirm(I18n.text('Replace this canvas? You can undo this change.')))return;
-      const response=await fetch('/api/canvas',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision,document:incoming})});
+      const response=await fetch('/api/canvas',{method:'POST',headers:{'Content-Type':'application/json','X-Project-ID':currentState?.project_id||''},body:JSON.stringify({revision,document:incoming})});
       const data=await response.json();if(!response.ok)throw new Error(data.error||'Invalid canvas file');
       checkpoint();revision=data.revision;
       const saved=await (await fetch('/api/canvas')).json();doc=saved.document;revision=saved.revision;
@@ -373,7 +390,7 @@
     const spec=state.creative_spec;
     if(spec?.source_prompt)item('Brief','text',()=>add('text',{text:spec.source_prompt,title:'Brief'}));
     (spec?.multimodal_assets||[]).forEach((asset,index)=>item(asset.name,asset.media_type,async()=>{
-      const response=await fetch('/api/canvas-reference',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:state.project_id,index})});
+      const response=await fetch('/api/canvas-reference',{method:'POST',headers:{'Content-Type':'application/json','X-Project-ID':currentState?.project_id||''},body:JSON.stringify({project_id:state.project_id,index})});
       const data=await response.json();if(!response.ok)throw new Error(data.error);add(data.asset.media_type,{asset:data.asset,title:data.asset.name});
     },asset.preview_data_url));
     (state.version_reviews||[]).filter(review=>review.asset?.local_video_url).forEach(review=>item(review.version_id.toUpperCase(),'video',()=>add('output',{title:review.version_id.toUpperCase(),version_id:review.version_id,project_id:state.project_id,text:review.status}),review.asset.poster_data_url));
@@ -386,7 +403,11 @@
     dialog.replaceChildren();const img=document.createElement('img');img.src=node.asset.preview_data_url||node.asset.data_url;img.alt=node.asset.name;img.style.width='100%';dialog.append(img);dialog.showModal();
   }
   window.addEventListener('vclstatechange',event=>{
-    const prior=currentState;currentState=event.detail;
+    const prior=currentState;currentState=event.detail;rememberWorkspace();
+    if(prior&&prior.project_id!==currentState.project_id){
+      clearTimeout(saveTimer);doc=null;loaded=false;loading=null;dirty=false;saveError=false;saveBlocked=false;selection.clear();selectedEdge=null;undo=[];redo=[];window.CanvasImages.reset();
+      if(!root.hidden)load().catch(error=>notify(error.message));
+    }
     if(!root.hidden&&!$('canvas-library').hidden)library();
     if(doc?.nodes.some(n=>n.kind==='output') && prior?.project_id!==currentState.project_id)render();
   });
@@ -408,5 +429,5 @@
   function languageLabel() {$('workspace-language').textContent=I18n.language==='zh'?'EN':'ZH';}
   $('workspace-language').addEventListener('click',()=>I18n.setLanguage(I18n.language==='zh'?'en':'zh'));
   window.addEventListener('languagechange',languageLabel);languageLabel();
-  workspace(location.hash==='#canvas'?'canvas':'vcl',false);
+  workspace(location.hash.slice(1),false);
 })();

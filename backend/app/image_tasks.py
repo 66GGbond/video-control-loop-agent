@@ -53,7 +53,9 @@ def signature(value):
 
 
 class ImageTasks:
-    def __init__(self,store):self.store=store
+    def __init__(self,store,scope=""):self.store=store;self.scope=scope
+
+    def key(self,node):return self.scope+":"+node if self.scope else node
 
     def recover(self):
         with self.store.connect() as db:
@@ -65,12 +67,12 @@ class ImageTasks:
 
     def get(self,visitor,node):
         with self.store.connect() as db:
-            row=db.execute('SELECT data FROM image_tasks WHERE visitor_id=? AND node_id=?',(visitor,node)).fetchone()
+            row=db.execute('SELECT data FROM image_tasks WHERE visitor_id=? AND node_id=?',(visitor,self.key(node))).fetchone()
         return json.loads(row[0]) if row else {}
 
     def put(self,visitor,node,data):
         with self.store.connect() as db:
-            db.execute('INSERT OR REPLACE INTO image_tasks VALUES (?,?,?)',(visitor,node,json.dumps(data,ensure_ascii=False)))
+            db.execute('INSERT OR REPLACE INTO image_tasks VALUES (?,?,?)',(visitor,self.key(node),json.dumps(data,ensure_ascii=False)))
 
     def recommend(self,visitor,node,document):
         previous=self.get(visitor,node)

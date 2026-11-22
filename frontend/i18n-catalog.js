@@ -1,5 +1,15 @@
 // Interface copy only. User briefs and model prose are not machine-translated.
 window.I18N_CATALOG = [
+  ["A local recovery plan was built from the submitted brief after the live planner could not return a valid plan. Review the brief-derived shots before approval.","规划模型暂未返回有效结果，当前展示根据需求整理的备用方案，请检查镜头后继续。"],
+  ["Project history", "历史项目"],
+  ["New project", "新建项目"],
+  ["No saved projects yet", "暂无历史项目"],
+  ["Open project", "打开项目"],
+  ["Rename project", "重命名项目"],
+  ["Project name", "项目名称"],
+  ["Save project name", "保存项目名称"],
+  ["Project preview unavailable", "项目预览暂不可用"],
+  ["项目名称需要包含 1–80 个字符。", "项目名称需要包含 1–80 个字符。"],
   ["Prepare video references","准备视频参考图"],
   ["Attached","已添加"],
   ["§0§ audio files","§0§ 个音频"],
