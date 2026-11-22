@@ -830,7 +830,7 @@ function renderCreativeAgent(state, spec, enrichedContext) {
   }
   const intro = document.querySelector("#agent-intro");
   if (state.status === "ready_for_brief") {
-    intro.textContent = "Tell me the story, key action, visual style, and any constraint that cannot change. I will ask only for context that materially affects the plan.";
+    intro.textContent = "Describe your idea, or send content from the canvas.";
   } else if (state.status === "awaiting_context_confirmation") {
     intro.textContent = "I have understood your brief. One detail needs confirmation before I create a controllable plan.";
   } else if (state.status === "needs_segmentation") {

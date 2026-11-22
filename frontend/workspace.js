@@ -5,23 +5,28 @@
   const icon=name=>`<svg class="ui-icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
   const labels={text:'Text',note:'Note',image:'Image',audio:'Audio',video:'Video reference',task:'Video task',image_task:'Image generation',output:'Video version'};
   const kinds={text:'text',note:'note',image:'image',audio:'audio',video:'video',task:'task',image_task:'image-task',output:'video'};
-  let doc=null,revision=0,loaded=false,loading=null,dirty=false,saving=false,saveTimer=null,changeId=0,saveError=false;
+  let doc=null,revision=0,loaded=false,loading=null,dirty=false,saving=false,saveTimer=null,changeId=0,saveError=false,saveBlocked=false,saveFailures=0;
   let selection=new Set(),selectedEdge=null,connecting=null,tool='select',showEdges=true,space=false,gesture=null,addPoint=null;
   let undo=[],redo=[],toastTimer=null,textEditSnapshot=null,currentState=null;
   const id=()=>`n_${crypto.randomUUID().replaceAll('-','')}`;
   function notify(text) {const el=$('workspace-toast');el.textContent=text;el.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.hidden=true,4300);}
-  function status(value,message) {const el=$('canvas-save-status');el.dataset.state=value;el.title=message||({saved:'Saved',saving:'Saving…',error:'Save failed. Export your draft before reloading.'}[value]);el.setAttribute('aria-label',el.title);}
+  function status(value,message) {const el=$('canvas-save-status');el.dataset.state=value;el.title=message||({saved:'Draft saved automatically',saving:'Saving draft…',error:'Save failed. Export your draft before reloading.'}[value]);el.setAttribute('aria-label',el.title);}
   function checkpoint(snapshot=C.clone(doc)) {undo.push(snapshot);if(undo.length>24)undo.shift();redo=[];updateControls();}
-  function changed() {dirty=true;changeId++;saveError=false;status('saving');clearTimeout(saveTimer);saveTimer=setTimeout(save,500);}
+  function changed() {dirty=true;changeId++;if(saveBlocked)return;saveError=false;status('saving');clearTimeout(saveTimer);saveTimer=setTimeout(save,500);}
   async function save() {
     if(!doc||!dirty||saving||saveError)return;
     saving=true;const at=changeId;
     try {
       const response=await fetch('/api/canvas',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision,document:doc})});
-      const data=await response.json();if(!response.ok)throw new Error(data.error||'Save failed.');
-      revision=data.revision;
+      const data=await response.json();if(!response.ok){const error=new Error(data.error||'Save failed.');error.status=response.status;throw error;}
+      revision=data.revision;saveFailures=0;
       if(at===changeId){dirty=false;status('saved');}
-    } catch(error) {saveError=true;status('error',error.message);notify(error.message);}
+    } catch(error) {
+      saveError=true;saveFailures++;saveBlocked=error.status>=400&&error.status<500;
+      const message=saveBlocked?error.message:'Draft save interrupted. Retrying automatically.';
+      status('error',message);if(saveBlocked||saveFailures===1)notify(message);
+      if(!saveBlocked){clearTimeout(saveTimer);saveTimer=setTimeout(()=>{saveError=false;save();},Math.min(15000,1000*2**Math.min(saveFailures,4)));}
+    }
     finally {saving=false;if(dirty&&!saveError){clearTimeout(saveTimer);saveTimer=setTimeout(save,100);}}
   }
   async function load() {
@@ -50,7 +55,6 @@
   document.querySelectorAll('.nav-page').forEach(button=>button.addEventListener('click',()=>workspace(button.dataset.workspace)));
   document.querySelector('.app-mark').addEventListener('click',()=>workspace('vcl'));
   window.addEventListener('hashchange',()=>workspace(location.hash==='#canvas'?'canvas':'vcl',false));
-  root.addEventListener('transitionend',event=>{if(event.propertyName==='right'&&loaded&&!root.hidden&&doc.nodes.length)fit();});
   function bounds(){return stage.getBoundingClientRect();}
   function local(event){const r=bounds();return {x:event.clientX-r.left,y:event.clientY-r.top};}
   function point(event){const p=local(event);return C.point(p.x,p.y,doc.viewport);}
@@ -68,17 +72,44 @@
     stage.style.backgroundSize=`${24*doc.viewport.zoom}px ${24*doc.viewport.zoom}px`;
     stage.style.backgroundPosition=`${doc.viewport.x}px ${doc.viewport.y}px`;
     $('canvas-zoom').textContent=Math.round(doc.viewport.zoom*100)+'%';
+    positionSelection();
   }
   function updateControls() {
     $('canvas-undo').disabled=!undo.length;$('canvas-redo').disabled=!redo.length;
     $('canvas-selection').hidden=!selection.size&&!selectedEdge;
     $('canvas-selection-count').textContent=selectedEdge?'Connection':`${selection.size}`;
     $('canvas-duplicate').disabled=!selection.size;
-    $('canvas-to-agent').hidden=!selection.size;
+    const single=selection.size===1?doc?.nodes.find(n=>selection.has(n.id)):null;
+    $('canvas-to-agent').hidden=!selection.size||['task','image_task','output','note'].includes(single?.kind);
+    $('canvas-selection-count').hidden=selection.size===1&&!selectedEdge;
     $('canvas-select').setAttribute('aria-pressed',String(tool==='select'));
     $('canvas-pan').setAttribute('aria-pressed',String(tool==='pan'));
     stage.dataset.tool=space?'pan':tool;
+    positionSelection();
   }
+  function positionSelection() {
+    const bar=$('canvas-selection');if(bar.hidden||root.hidden)return;
+    const region=root.getBoundingClientRect();
+    let selected=[...nodes.children].filter(el=>selection.has(el.dataset.node));
+    if(!selected.length&&selectedEdge){const ends=selectedEdge.split(':');selected=[...nodes.children].filter(el=>ends.includes(el.dataset.node));}
+    if(!selected.length){bar.hidden=true;return;}
+    const boxes=selected.map(el=>el.getBoundingClientRect());
+    const box={left:Math.min(...boxes.map(r=>r.left)),right:Math.max(...boxes.map(r=>r.right)),top:Math.min(...boxes.map(r=>r.top)),bottom:Math.max(...boxes.map(r=>r.bottom))};
+    const visible=box.right>region.left&&box.left<region.right&&box.bottom>region.top&&box.top<region.bottom;
+    bar.style.visibility=visible?'visible':'hidden';
+    if(!visible)return;
+    const width=bar.offsetWidth,height=bar.offsetHeight,gap=10;
+    const floor=$('canvas-workspace').querySelector('.canvas-header').getBoundingClientRect().bottom-region.top+10;
+    let top=box.top-region.top-height-gap;
+    if(top<floor&&box.bottom-region.top+gap+height<region.height-78)top=box.bottom-region.top+gap;
+    const x=Math.max(8,Math.min((box.left+box.right)/2-region.left-width/2,region.width-width-8));
+    const y=Math.max(floor,Math.min(top,region.height-height-78));
+    bar.style.left=x+'px';bar.style.top=y+'px';
+  }
+  const nodeResize=new ResizeObserver(positionSelection);
+  const overlayResize=new ResizeObserver(positionSelection);
+  overlayResize.observe(root);overlayResize.observe($('canvas-selection'));
+  window.addEventListener('resize',positionSelection);
   function updateSelection() {
     for(const el of nodes.children)el.classList.toggle('selected',selection.has(el.dataset.node));
     updateControls();drawEdges();
@@ -116,12 +147,12 @@
   function render() {
     if(!doc)return;
     // Rebuilding only occurs for structural edits, never per pointer movement or keystroke.
-    nodes.replaceChildren();
+    nodeResize.disconnect();nodes.replaceChildren();
     for(const node of doc.nodes) {
       const el=document.createElement('article');el.className=`canvas-node kind-${node.kind}`;el.dataset.node=node.id;el.style.left=node.x+'px';el.style.top=node.y+'px';
       const header=document.createElement('div');header.className='canvas-node-header';header.innerHTML=icon(kinds[node.kind]);
       const title=document.createElement('input');title.value=node.title;title.maxLength=120;title.setAttribute('aria-label','Node title');bindEdit(title,node,'title');header.append(title);
-      const actions=document.createElement('div');actions.className='canvas-node-actions';actions.append(button('copy','Duplicate',()=>duplicate([node.id])),button('trash','Delete',()=>remove([node.id])));header.append(actions);el.append(header);
+      el.append(header);
       const body=document.createElement('div');body.className='canvas-node-body';
       if(['text','note','task','image_task'].includes(node.kind)) {
         const input=document.createElement('textarea');input.value=node.text;input.maxLength=12000;input.setAttribute('aria-label',labels[node.kind]);input.placeholder=node.kind==='image_task'?'Describe this image…':node.kind==='task'?'Describe this video…':node.kind==='note'?'Note…':'Write a brief…';bindEdit(input,node,'text');body.append(input);
@@ -164,7 +195,7 @@
         selectedEdge=null;updateSelection();
         if(event.target.closest('input,textarea'))return;
         gesture={type:'nodes',start:local(event),snapshot:C.clone(doc),positions:doc.nodes.filter(n=>selection.has(n.id)).map(n=>({id:n.id,x:n.x,y:n.y})),moved:false};stage.setPointerCapture(event.pointerId);event.preventDefault();
-      });nodes.append(el);
+      });nodes.append(el);nodeResize.observe(el);
     }
     $('canvas-empty').hidden=doc.nodes.length>0;transform();updateSelection();updateControls();
   }
@@ -250,7 +281,7 @@
       for(const position of gesture.positions) {
         const node=doc.nodes.find(n=>n.id===position.id);node.x=Math.max(-100000,Math.min(100000,Math.round(position.x+dx/doc.viewport.zoom)));node.y=Math.max(-100000,Math.min(100000,Math.round(position.y+dy/doc.viewport.zoom)));
         const el=nodes.querySelector(`[data-node="${node.id}"]`);el.style.left=node.x+'px';el.style.top=node.y+'px';
-      }drawEdges();
+      }drawEdges();positionSelection();
     } else if(gesture.type==='pan') {
       doc.viewport.x=gesture.snapshot.viewport.x+dx;doc.viewport.y=gesture.snapshot.viewport.y+dy;transform();
     } else {
@@ -294,7 +325,6 @@
   $('canvas-zoom-in').addEventListener('click',()=>{if(doc)zoom(doc.viewport.zoom*1.2);});$('canvas-zoom-out').addEventListener('click',()=>{if(doc)zoom(doc.viewport.zoom/1.2);});$('canvas-zoom').addEventListener('click',()=>zoom(1));$('canvas-fit').addEventListener('click',fit);
   $('canvas-show-edges').addEventListener('click',()=>{showEdges=!showEdges;$('canvas-show-edges').setAttribute('aria-pressed',String(showEdges));drawEdges();});
   $('canvas-delete').addEventListener('click',()=>remove());$('canvas-duplicate').addEventListener('click',()=>duplicate());$('canvas-to-agent').addEventListener('click',()=>send());
-  $('canvas-save-status').addEventListener('click',()=>{if(dirty){saveError=false;save();}else notify('Saved');});
   $('canvas-title').addEventListener('focus',()=>{if(doc)textEditSnapshot=C.clone(doc);});
   $('canvas-title').addEventListener('input',event=>{if(!doc)return;if(textEditSnapshot){checkpoint(textEditSnapshot);textEditSnapshot=null;}doc.title=event.target.value.trim()||'Untitled canvas';changed();});
   async function importFiles(files) {
@@ -340,7 +370,7 @@
       const data=await response.json();if(!response.ok)throw new Error(data.error||'Invalid canvas file');
       checkpoint();revision=data.revision;
       const saved=await (await fetch('/api/canvas')).json();doc=saved.document;revision=saved.revision;
-      selection.clear();selectedEdge=null;connecting=null;$('canvas-title').value=doc.title==='Untitled canvas'?'':doc.title;status('saved');render();
+      selection.clear();selectedEdge=null;connecting=null;saveError=false;saveBlocked=false;saveFailures=0;clearTimeout(saveTimer);$('canvas-title').value=doc.title==='Untitled canvas'?'':doc.title;status('saved');render();
     }catch(error){notify(error.message);}
   });
   function library() {
@@ -373,7 +403,7 @@
   });
   document.addEventListener('pointerdown',event=>{if(!event.target.closest('#canvas-menu')&&!event.target.closest('#canvas-stage'))$('canvas-menu').hidden=true;});
   window.CanvasImages.mount({getDocument:()=>doc,render,notify,changed,add,checkpoint,
-    async flush(){clearTimeout(saveTimer);while(saving)await new Promise(resolve=>setTimeout(resolve,50));if(saveError)throw new Error('Save the canvas before generating.');await save();if(dirty)throw new Error('Save the canvas before generating.');},
+    async flush(){while(saving)await new Promise(resolve=>setTimeout(resolve,50));if(saveError)throw new Error('Wait for the draft to finish saving.');clearTimeout(saveTimer);await save();if(dirty)throw new Error('Wait for the draft to finish saving.');},
     async addResult(result,taskId){
       if(doc.nodes.some(n=>n.image_run_id===result.run_id))return;
       const task=doc.nodes.find(n=>n.id===taskId);

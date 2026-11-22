@@ -1780,7 +1780,7 @@ window.I18N_CATALOG = [
   , ["Official positioning: faster generation and lower cost; latency/cost sensitive use", "官方定位：速度与成本优先"]
   , ["Decision model unavailable; capability-based fallback recommendation.", "决策模型暂不可用，按能力规则给出备用推荐。"]
   , ["Recommend an image model first.", "先获取生图模型推荐。"]
-  , ["Save the canvas before generating.", "请先完成画布保存。"]
+  , ["Wait for the draft to finish saving.", "草稿保存中，请稍候。"]
   , ["Image saved in Project assets.", "图片已保存到项目素材。"]
   , ["Image unavailable", "图片暂不可用。"]
   , ["Write an image prompt of up to 12000 characters", "请填写生图需求，最多 12000 字符。"]
@@ -1791,4 +1791,8 @@ window.I18N_CATALOG = [
   , ["Image generation failed. Check the model configuration or Ark console; no automatic retry was submitted.", "生图失败，请检查模型配置或方舟控制台；未自动重试。"]
   , ["Generation status is uncertain. Check the Ark console before retrying; no automatic retry was submitted.", "生成状态未确认，请先查看方舟控制台；未自动重试。"]
   , ["Service restarted during generation. Check the Ark console before retrying; no automatic retry was submitted.", "服务在生成期间重启，请先查看方舟控制台；未自动重试。"]
+  , ["Describe your idea, or send content from the canvas.", "描述你的想法，或从画布传入内容。"]
+  , ["Draft saved automatically", "草稿已自动保存"]
+  , ["Saving draft…", "草稿保存中…"]
+  , ["Draft save interrupted. Retrying automatically.", "草稿保存中断，正在自动重试。"]
 ];
