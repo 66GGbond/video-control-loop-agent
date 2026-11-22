@@ -1,14 +1,14 @@
 """Planner implementations.
 
 The fallback planner is deterministic only for this reproducible interview demo.
-DeepSeekPlanner shows the production boundary: it receives evidence, not raw video.
+ArkRepairPlanner shows the production boundary: it receives evidence, not raw video.
 """
 
 from __future__ import annotations
 
 import json
 import os
-import urllib.request
+from ..tools.ark_responses import configured_model, request_json, DEFAULT_ENDPOINT
 from typing import Any, Dict, List
 
 from .sampling import bind_sampling_to_timeline, validate_evidence_sampling_policy
@@ -16,15 +16,6 @@ from .timing import expected_shot_ids
 from .generation_spec import requested_duration_seconds, validate_generation_spec
 from .duration_planning import build_duration_plan, validate_production_strategy
 from ..domain.models import Action, CreativeSpec, Decision, EvaluationReport, ProjectState, Severity
-
-
-DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-
-
-def _deepseek_chat_endpoint(base_url: str | None = None) -> str:
-    """Accept either a host or a complete compatible chat-completions URL."""
-    configured = (base_url or os.getenv("DEEPSEEK_API_BASE_URL") or DEFAULT_DEEPSEEK_BASE_URL).strip().rstrip("/")
-    return configured if configured.endswith("/chat/completions") else f"{configured}/chat/completions"
 
 
 class FixturePlanner:
@@ -76,13 +67,13 @@ class FixturePlanner:
         )
 
 
-class DeepSeekControlPlanner:
+class ArkControlPlanner:
     """Turn a creative brief into a bounded, inspectable control plan."""
 
     def __init__(self, api_key: str | None = None, model: str | None = None, base_url: str | None = None):
-        self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
-        self.model = model or os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
-        self.endpoint = _deepseek_chat_endpoint(base_url)
+        self.api_key = api_key or os.getenv("ARK_API_KEY")
+        self.model = model or configured_model()
+        self.endpoint = base_url or DEFAULT_ENDPOINT
 
     def available(self) -> bool:
         return bool(self.api_key)
@@ -94,7 +85,7 @@ class DeepSeekControlPlanner:
         enriched_context: Dict[str, Any] | None = None,
     ) -> CreativeSpec:
         if not self.available():
-            raise RuntimeError("DEEPSEEK_API_KEY is not configured")
+            raise RuntimeError("ARK_API_KEY is not configured")
         reference_context: Dict[str, str] = {}
         if reference_asset:
             reference_context = {
@@ -158,41 +149,21 @@ generation_spec.duration_seconds is a provisional valid integer from 4 to 15; th
             "asset_manifest": (enriched_context or {}).get("asset_manifest", []),
             "enriched_context": enriched_context or {},
         }
-        parsed = self._request_json(system, payload, 2800)
+        system += "\nSchema bounds: production_direction.camera_language, visual_treatment, motion_continuity and sound_design must each be a non-empty string of at most 260 characters. Use short director instructions, not paragraphs. negative_guards must contain 1–4 items."
+        parsed = self._request_json(system, payload, 5000)
         try:
             return self._to_spec(prompt, reference_asset, parsed, enriched_context)
-        except (ValueError, KeyError, TypeError):
+        except (ValueError, KeyError, TypeError) as error:
             # A plan can be semantically useful but fail a strict field check
             # (most often an omitted criterion). Retry once with a compact
             # schema reminder before allowing the bounded local fallback.
             retry_system = system + "\nYour previous output failed schema validation. Return a complete JSON object now: 1-6 ordered beats named S1…; 3-6 constraints; 2-4 risks; one or more acceptance criteria for every planned beat; valid generation_spec; a complete production_direction; integer repair budget."
-            retry = self._request_json(retry_system, payload, 3000)
+            retry_system += "\nCorrect this exact validation failure: " + str(error).replace("\n", " ")[:220]
+            retry = self._request_json(retry_system, payload, 6000)
             return self._to_spec(prompt, reference_asset, retry, enriched_context)
 
     def _request_json(self, system: str, payload: Dict[str, Any], max_tokens: int = 1500) -> Dict[str, Any]:
-        request_body = json.dumps({
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
-            "response_format": {"type": "json_object"},
-            "thinking": {"type": "disabled"},
-            "temperature": 0.1,
-            "max_tokens": max_tokens,
-        }).encode("utf-8")
-        request = urllib.request.Request(
-            self.endpoint,
-            data=request_body,
-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(request, timeout=45) as response:
-            raw = json.loads(response.read().decode("utf-8"))
-        content = raw["choices"][0]["message"]["content"]
-        if not content:
-            raise ValueError("DeepSeek returned an empty JSON plan")
-        return json.loads(content)
+        return request_json(self.api_key, self.model, system, payload, max_tokens, endpoint=self.endpoint)
 
     def _to_spec(
         self,
@@ -208,11 +179,11 @@ generation_spec.duration_seconds is a provisional valid integer from 4 to 15; th
         production_strategy = validate_production_strategy(parsed.get("production_strategy"))
         raw_shots = parsed.get("shots")
         if not isinstance(raw_shots, list) or not 1 <= len(raw_shots) <= 6:
-            raise ValueError("DeepSeek plan must contain 1 to 6 storyboard beats")
+            raise ValueError("Doubao Seed 2.1 Pro plan must contain 1 to 6 storyboard beats")
         shots = []
         for index, shot in enumerate(raw_shots, start=1):
             if not isinstance(shot, dict):
-                raise ValueError("Each DeepSeek shot must be an object")
+                raise ValueError("Each Doubao Seed 2.1 Pro shot must be an object")
             shots.append({
                 "shot_id": f"S{index}",
                 "intent": self._text(shot.get("intent"), f"shots[{index}].intent"),
@@ -269,19 +240,19 @@ generation_spec.duration_seconds is a provisional valid integer from 4 to 15; th
             production_direction=production_direction,
             acceptance_criteria=acceptance_criteria,
             enriched_context=enriched_context or {},
-            planning_source="deepseek",
-            planning_notice="DeepSeek converted this brief into a structured control plan. Review the budget before approving it.",
+            planning_source="doubao_seed_2_1_pro",
+            planning_notice="Doubao Seed 2.1 Pro converted this brief into a structured control plan. Review the budget before approving it.",
         )
 
     @staticmethod
     def _text(value: Any, field: str) -> str:
         if not isinstance(value, str) or not value.strip():
-            raise ValueError(f"DeepSeek plan field {field} must be a non-empty string")
+            raise ValueError(f"Doubao Seed 2.1 Pro plan field {field} must be a non-empty string")
         return value.strip()
 
     def _text_list(self, value: Any, field: str, minimum: int, maximum: int) -> List[str]:
         if not isinstance(value, list) or not minimum <= len(value) <= maximum:
-            raise ValueError(f"DeepSeek plan field {field} must contain {minimum} to {maximum} items")
+            raise ValueError(f"Doubao Seed 2.1 Pro plan field {field} must contain {minimum} to {maximum} items")
         return [self._text(item, field) for item in value]
 
     def _acceptance_criteria(self, value: Any, allowed_shot_ids: set[str]) -> List[Dict[str, Any]]:
@@ -329,7 +300,7 @@ generation_spec.duration_seconds is a provisional valid integer from 4 to 15; th
             return default
         if not isinstance(value, dict):
             raise ValueError("production_direction must be an object")
-        result = {"source": "deepseek"}
+        result = {"source": "doubao_seed_2_1_pro"}
         for key in ("camera_language", "visual_treatment", "motion_continuity"):
             text = value.get(key)
             if not isinstance(text, str) or not text.strip() or len(text.strip()) > 260:
@@ -368,24 +339,24 @@ generation_spec.duration_seconds is a provisional valid integer from 4 to 15; th
         }
 
 
-class DeepSeekPlanner:
-    """Optional JSON-only planner adapter for DeepSeek-compatible chat API.
+class ArkRepairPlanner:
+    """JSON-only repair decision adapter for Ark Responses.
 
     It is intentionally not the visual evaluator. Supply a visual report first,
-    then use DeepSeek for prioritisation, strategy selection and tool arguments.
+    then use Doubao Seed 2.1 Pro for prioritisation, strategy selection and tool arguments.
     """
 
     def __init__(self, api_key: str | None = None, model: str | None = None, base_url: str | None = None):
-        self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
-        self.model = model or os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
-        self.endpoint = _deepseek_chat_endpoint(base_url)
+        self.api_key = api_key or os.getenv("ARK_API_KEY")
+        self.model = model or configured_model()
+        self.endpoint = base_url or DEFAULT_ENDPOINT
 
     def available(self) -> bool:
         return bool(self.api_key)
 
     def decide(self, state: ProjectState, report: EvaluationReport) -> Decision:
         if not self.available():
-            raise RuntimeError("DEEPSEEK_API_KEY is not configured")
+            raise RuntimeError("ARK_API_KEY is not configured")
 
         payload = {
             "goal": state.creative_spec.goal,
@@ -430,32 +401,15 @@ class DeepSeekPlanner:
             "{action,target_shot,priority,reason,expected_improvement,rejected_options,tool_name}. "
             "expected_improvement and rejected_options must each be arrays of short strings."
         )
-        request_body = json.dumps({
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-            ],
-            "response_format": {"type": "json_object"},
-            "temperature": 0.1,
-        }).encode("utf-8")
-        request = urllib.request.Request(
-            self.endpoint,
-            data=request_body,
-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(request, timeout=45) as response:
-            raw = json.loads(response.read().decode("utf-8"))
-        parsed = json.loads(raw["choices"][0]["message"]["content"])
+        parsed = request_json(self.api_key, self.model, system, payload, 1600, endpoint=self.endpoint)
         priority = parsed.get("priority")
         reason = parsed.get("reason")
         tool_name = parsed.get("tool_name")
         if not all(isinstance(value, str) and value.strip() for value in (priority, reason, tool_name)):
-            raise ValueError("DeepSeek repair decision is missing required text fields")
+            raise ValueError("Doubao Seed 2.1 Pro repair decision is missing required text fields")
         target_shot = parsed.get("target_shot")
         if target_shot is not None and not isinstance(target_shot, str):
-            raise ValueError("DeepSeek repair decision target_shot must be text or null")
+            raise ValueError("Doubao Seed 2.1 Pro repair decision target_shot must be text or null")
         return Decision(
             action=Action(parsed["action"]),
             target_shot=target_shot,
@@ -471,5 +425,5 @@ class DeepSeekPlanner:
         if isinstance(value, str) and value.strip():
             return [value.strip()]
         if not isinstance(value, list) or not all(isinstance(item, str) and item.strip() for item in value):
-            raise ValueError(f"DeepSeek repair decision {field} must be a string list")
+            raise ValueError(f"Doubao Seed 2.1 Pro repair decision {field} must be a string list")
         return [item.strip() for item in value]

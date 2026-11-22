@@ -66,7 +66,7 @@ def fallback_beat_pacing(prompt: str) -> List[Dict[str, str]]:
     """Bounded recovery pacing when a live director-plan is unavailable.
 
     It is deliberately modest: this is a transparent text-only recovery path,
-    not a substitute for the semantic plan from DeepSeek.
+    not a substitute for the semantic plan from Doubao Seed 2.1 Pro.
     """
     brief = (prompt or "").lower()
     sequence_markers = ("then", "after", "before", "finally", "followed by", "先", "然后", "接着", "随后", "最后", "再")

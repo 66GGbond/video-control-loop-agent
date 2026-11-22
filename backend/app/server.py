@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 from urllib import request as urllib_request
 
 from .sessions import SessionStore
-from .agent.planner import DeepSeekControlPlanner
+from .agent.planner import ArkControlPlanner
 from .agent.context import ContextEnrichmentAgent
 from .agent.generation_spec import validate_brief_duration
 from .agent.prompt_compiler import PromptCompiler
@@ -51,7 +51,7 @@ def load_local_env(path: Path) -> None:
         key, value = line.split("=", 1)
         key = key.strip()
         if key in {
-            "DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "DEEPSEEK_API_BASE_URL", "ARK_API_KEY", "ARK_VISION_MODEL",
+            "ARK_API_KEY", "ARK_MODEL",
             "ARK_VIDEO_TEXT_MODEL", "ARK_VIDEO_REFERENCE_MODEL", "VIDEO_PROVIDER",
             "MINIMAX_API_KEY", "MINIMAX_VIDEO_MODEL", "MINIMAX_VIDEO_RESOLUTION", "MINIMAX_API_BASE_URL",
             "PORT",
@@ -64,7 +64,7 @@ if os.getenv("VIDEO_AGENT_SKIP_LOCAL_ENV") != "1":
 SESSIONS = SessionStore(RUNTIME)
 VISITOR_LOCKS = [threading.RLock() for _ in range(128)]
 ORCHESTRATOR = create_orchestrator()
-CONTROL_PLANNER = DeepSeekControlPlanner()
+CONTROL_PLANNER = ArkControlPlanner()
 CONTEXT_AGENT = ContextEnrichmentAgent()
 PROMPT_COMPILER = PromptCompiler()
 VIDEO_GENERATOR = create_video_generator()

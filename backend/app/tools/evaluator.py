@@ -15,6 +15,7 @@ from ..domain.models import BadCase, EvaluationReport, ProjectState, RubricScore
 from ..domain.rubric import apply_release_decision, profile_from_state
 from ..agent.asset_manifest import evaluation_reference_entries
 from .audio_probe import AudioPresenceProbe
+from .ark_responses import configured_model, request_json, response_text
 
 
 DIMENSIONS = (
@@ -106,20 +107,20 @@ class FixtureVisionEvaluator:
 
 
 class ArkVisionEvaluator:
-    """Evaluate browser-sampled video keyframes with Doubao Seed 2.0 lite."""
+    """Evaluate browser-sampled video keyframes with Doubao Seed 2.1 Pro."""
 
     endpoint = "https://ark.cn-beijing.volces.com/api/v3/responses"
 
     def __init__(self, api_key: str | None = None, model: str | None = None):
         self.api_key = api_key or os.getenv("ARK_API_KEY")
-        self.model = model or os.getenv("ARK_VISION_MODEL")
+        self.model = model or configured_model()
 
     def available(self) -> bool:
         return bool(self.api_key and self.model)
 
     def analyze(self, state: ProjectState) -> EvaluationReport:
         if not self.available():
-            raise RuntimeError("ARK_API_KEY or ARK_VISION_MODEL is not configured")
+            raise RuntimeError("ARK_API_KEY or ARK_MODEL is not configured")
         if not state.evaluation_frame_records:
             raise ValueError("No video keyframes are available for visual evaluation")
 
@@ -192,22 +193,7 @@ class ArkVisionEvaluator:
         content: list[dict[str, Any]],
         frame_shot_map: dict[str, dict[str, Any]],
     ) -> EvaluationReport:
-        body = json.dumps({
-            "model": self.model,
-            "input": [{"role": "user", "content": content}],
-            "max_output_tokens": 2200,
-            "thinking": {"type": "disabled"},
-        }).encode("utf-8")
-        request = urllib.request.Request(
-            self.endpoint,
-            data=body,
-            headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
-            method="POST",
-        )
-        with urllib.request.urlopen(request, timeout=70) as response:
-            raw = json.loads(response.read().decode("utf-8"))
-        content_text = self._response_text(raw)
-        parsed = self._parse_json(content_text)
+        parsed = request_json(self.api_key, self.model, "Return the requested video evaluation as JSON. Follow the evaluation contract in the supplied content.", None, 4000, timeout=90, endpoint=self.endpoint, content=content)
         return self._to_report(state, parsed, frame_shot_map)
 
     @staticmethod
@@ -222,23 +208,7 @@ All five keys in `scores` are mandatory: instruction_following, character_consis
     @staticmethod
     def _response_text(raw: dict[str, Any]) -> str:
         """Support the Responses API's output array without depending on an SDK."""
-        direct = raw.get("output_text")
-        if isinstance(direct, str) and direct.strip():
-            return direct
-        output = raw.get("output")
-        if not isinstance(output, list):
-            raise ValueError("Seed 2.0 lite returned no output array")
-        parts: list[str] = []
-        for item in output:
-            if not isinstance(item, dict):
-                continue
-            for content in item.get("content", []):
-                if isinstance(content, dict) and isinstance(content.get("text"), str):
-                    parts.append(content["text"])
-        result = "\n".join(parts).strip()
-        if not result:
-            raise ValueError("Seed 2.0 lite returned no text output")
-        return result
+        return response_text(raw)
 
     def _instruction(self, state: ProjectState) -> str:
         spec = state.creative_spec
@@ -335,9 +305,9 @@ Every one of the five score values is required and must be a JSON number from 1 
             bad_cases=cases,
             summary=self._text(parsed.get("summary", parsed.get("overall_summary")), "summary"),
             atomic_checks=checks,
-            observation_source="doubao_seed_2_lite",
+            observation_source="doubao_seed_2_1_pro",
             observation_notice=(
-                f"Doubao Seed 2.0 lite evaluated {len(checks)} planned acceptance checks from browser-sampled keyframes. "
+                f"Doubao Seed 2.1 Pro evaluated {len(checks)} planned acceptance checks from browser-sampled keyframes. "
                 + (" ".join(calibration_notes) if calibration_notes else "Scores retained their evidence-calibrated values.")
             ),
         )
@@ -536,7 +506,7 @@ class ResilientVisionEvaluator:
         if asset_source in {"user_upload", "agent_generated"}:
             if not self.primary.available():
                 raise VisionObservationUnavailable(
-                    "Doubao Seed 2.0 lite is not configured. Add ARK_API_KEY and ARK_VISION_MODEL, then restart the local server."
+                    "Doubao Seed 2.1 Pro is not configured. Add ARK_API_KEY and ARK_MODEL, then restart the local server."
                 )
             if not state.evaluation_frame_records:
                 raise VisionObservationUnavailable("No usable browser-sampled keyframes are available for this video.")
@@ -554,14 +524,14 @@ class ResilientVisionEvaluator:
     @staticmethod
     def _safe_error_message(exc: Exception) -> str:
         if isinstance(exc, urllib.error.HTTPError):
-            return f"Doubao Seed 2.0 lite returned HTTP {exc.code}. Check the Ark model ID and API-key permissions, then try again."
+            return f"Doubao Seed 2.1 Pro returned HTTP {exc.code}. Check the Ark model ID and API-key permissions, then try again."
         if isinstance(exc, urllib.error.URLError):
-            return "The local server could not reach Doubao Seed 2.0 lite. Check your network connection and try again."
+            return "The local server could not reach Doubao Seed 2.1 Pro. Check your network connection and try again."
         if isinstance(exc, json.JSONDecodeError):
-            return "Doubao Seed 2.0 lite returned an unreadable response. Try the evaluation again."
+            return "Doubao Seed 2.1 Pro returned an unreadable response. Try the evaluation again."
         if isinstance(exc, ValueError):
-            return f"Doubao Seed 2.0 lite returned an incomplete evaluation ({exc}). Try the evaluation again."
-        return "Doubao Seed 2.0 lite could not complete the observation. Try the evaluation again."
+            return f"Doubao Seed 2.1 Pro returned an incomplete evaluation ({exc}). Try the evaluation again."
+        return "Doubao Seed 2.1 Pro could not complete the observation. Try the evaluation again."
 
 
 class VisionObservationUnavailable(RuntimeError):

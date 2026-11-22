@@ -1107,7 +1107,7 @@ function renderEvaluation(state) {
   const report = review?.report || null;
   const observationError = review?.observation_error || "";
   const source = document.querySelector("#observation-source");
-  source.textContent = observationError ? "Observation unavailable" : !report ? "Awaiting observation" : report.observation_source === "doubao_seed_2_lite" ? "Seed 2.0 lite" : "Demo fixture";
+  source.textContent = observationError ? "Observation unavailable" : !report ? "Awaiting observation" : report.observation_source === "doubao_seed_2_1_pro" ? "Doubao Seed 2.1 Pro" : report.observation_source === "fixture" ? "Demo fixture" : "Archived model result";
   const scores = document.querySelector("#scores");
   const emptyGate = document.querySelector("#gate-empty");
   const summary = document.querySelector("#summary");
@@ -1226,8 +1226,8 @@ function render(state) {
   }
 
   document.querySelector("#goal").textContent = spec.goal;
-  const usedDeepSeek = spec.planning_source === "deepseek";
-  document.querySelector("#planning-source").textContent = usedDeepSeek ? "DeepSeek plan" : "Deterministic fallback";
+  const usedLivePlanner = spec.planning_source === "doubao_seed_2_1_pro";
+  document.querySelector("#planning-source").textContent = usedLivePlanner ? "Doubao Seed 2.1 Pro plan" : ["fixture", "fallback"].includes(spec.planning_source) ? "Deterministic fallback" : "Archived model plan";
   const samplingFocus = (spec.evidence_sampling?.focus_shot_ids || []).join(" · ");
   const planningSummary = spec.planning_notice || "Agent analyzed the brief, built a scene-specific control plan, and identified controllability risks.";
   document.querySelector("#plan-summary-text").textContent = samplingFocus

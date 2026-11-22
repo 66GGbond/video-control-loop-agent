@@ -111,3 +111,7 @@ The H3 V2 adapter submits an asynchronous task, polls its status, downloads the 
 ## Local interview demo
 
 Run `python3 run_demo.py` and open http://127.0.0.1:8000. Configured models are available directly, without trial codes or a total video-duration allowance. Switch Chinese / English at the top right. Projects persist locally; repair iteration budgets and per-clip model limits still apply.
+
+## Current models
+
+Doubao Seed 2.1 Pro (`doubao-seed-2-1-pro-260915`) handles understanding, planning, vision evaluation and repair decisions; MiniMax H3 generates video. Image generation is not connected. [模型职责、原有策略与后续路由扩展](docs/model-routing.md)。

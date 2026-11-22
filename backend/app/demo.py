@@ -3,7 +3,7 @@ from __future__ import annotations
 from .agent.orchestrator import AgentOrchestrator
 from .agent.context import ContextEnrichmentAgent
 from .agent.asset_manifest import build_asset_manifest
-from .agent.planner import DeepSeekControlPlanner, DeepSeekPlanner, FixturePlanner
+from .agent.planner import ArkControlPlanner, ArkRepairPlanner, FixturePlanner
 from .agent.sampling import fallback_evidence_sampling_policy
 from .agent.generation_spec import fallback_generation_spec, requested_duration_seconds
 from .agent.duration_planning import build_duration_plan, fallback_beat_pacing
@@ -162,7 +162,7 @@ def create_demo_state(
 def create_project_state(
     prompt: str,
     reference_asset: dict | None = None,
-    control_planner: DeepSeekControlPlanner | None = None,
+    control_planner: ArkControlPlanner | None = None,
     enriched_context: dict | None = None,
     multimodal_assets: list[dict] | None = None,
 ) -> ProjectState:
@@ -205,7 +205,7 @@ def create_project_state(
             fallback = create_demo_state(prompt, reference_asset, enriched_context, multimodal_assets)
             failure_kind = type(exc).__name__
             fallback.creative_spec.planning_notice = (
-                "DeepSeek did not return a valid executable control plan for this request "
+                "Doubao Seed 2.1 Pro did not return a valid executable control plan for this request "
                 f"({failure_kind}); the Agent is showing a clearly labelled local recovery plan instead."
             )
             fallback.history.append({
@@ -213,7 +213,7 @@ def create_project_state(
                 "phase": "observe",
                 "event": "control_planner_fallback",
                 "payload": {
-                    "planner": "deepseek",
+                    "planner": "doubao_seed_2_1_pro",
                     "failure_kind": failure_kind,
                     "message": "The live planner was unavailable or failed control-plan validation; a deterministic recovery plan was used.",
                 },
@@ -227,7 +227,7 @@ def create_project_state(
 def create_enriched_project_state(
     prompt: str,
     reference_asset: dict | None = None,
-    control_planner: DeepSeekControlPlanner | None = None,
+    control_planner: ArkControlPlanner | None = None,
     context_agent: ContextEnrichmentAgent | None = None,
     target_market: str = "",
     multimodal_assets: list[dict] | None = None,
@@ -270,7 +270,7 @@ def create_enriched_project_state(
 
 def create_orchestrator() -> AgentOrchestrator:
     fallback_planner = FixturePlanner()
-    live_planner = DeepSeekPlanner()
+    live_planner = ArkRepairPlanner()
     planner = live_planner if live_planner.available() else fallback_planner
     return AgentOrchestrator(ResilientVisionEvaluator(), planner, fallback_planner, PromptCompiler())
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-import urllib.request
+from ..tools.ark_responses import configured_model, request_json, response_text, DEFAULT_ENDPOINT
 from datetime import date
 from typing import Any
 
@@ -17,14 +17,6 @@ SEASON_TERMS = (
     "应季", "当季", "当前季节", "节日", "夏季", "冬季", "春季", "秋季",
 )
 SHORT_FORM_TERMS = ("tiktok", "reel", "shorts", "抖音", "短视频", "种草", "爆款")
-DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-
-
-def _deepseek_chat_endpoint(base_url: str | None = None) -> str:
-    configured = (base_url or os.getenv("DEEPSEEK_API_BASE_URL") or DEFAULT_DEEPSEEK_BASE_URL).strip().rstrip("/")
-    return configured if configured.endswith("/chat/completions") else f"{configured}/chat/completions"
-
-
 def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
     lowered = (text or "").lower()
     return any(term in lowered for term in terms)
@@ -48,13 +40,13 @@ class ContextEnrichmentAgent:
         vision_model: str | None = None,
         text_video_model: str | None = None,
         reference_video_model: str | None = None,
-        deepseek_base_url: str | None = None,
+        base_url: str | None = None,
     ):
-        self.api_key = api_key or os.getenv("DEEPSEEK_API_KEY")
-        self.model = model or os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
-        self.endpoint = _deepseek_chat_endpoint(deepseek_base_url)
+        self.api_key = api_key or os.getenv("ARK_API_KEY")
+        self.model = model or configured_model()
+        self.endpoint = base_url or DEFAULT_ENDPOINT
         self.vision_api_key = vision_api_key or os.getenv("ARK_API_KEY")
-        self.vision_model = vision_model or os.getenv("ARK_VISION_MODEL")
+        self.vision_model = vision_model or configured_model()
         self.text_video_model = text_video_model or os.getenv("ARK_VIDEO_TEXT_MODEL")
         self.reference_video_model = reference_video_model or os.getenv("ARK_VIDEO_REFERENCE_MODEL")
         self.capabilities = VideoCapabilityRegistry(self.text_video_model, self.reference_video_model)
@@ -203,18 +195,7 @@ Schema: {"tool_requests":[{"tool":"registered name","reason":"short reason"}],"n
         return suggestions
 
     def _request_json(self, system: str, payload: dict[str, Any]) -> dict[str, Any]:
-        body = json.dumps({
-            "model": self.model,
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
-            "response_format": {"type": "json_object"},
-            "thinking": {"type": "disabled"},
-            "temperature": 0.0,
-            "max_tokens": 350,
-        }).encode("utf-8")
-        request = urllib.request.Request(self.endpoint, data=body, headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(request, timeout=25) as response:
-            raw = json.loads(response.read().decode("utf-8"))
-        return json.loads(raw["choices"][0]["message"]["content"])
+        return request_json(self.api_key, self.model, system, payload, 700, timeout=60, endpoint=self.endpoint)
 
     @staticmethod
     def _calendar_context(market: str) -> dict[str, Any]:
@@ -243,17 +224,8 @@ Schema: {"tool_requests":[{"tool":"registered name","reason":"short reason"}],"n
         system = """Observe a user-provided reference image for an AI video control plan. Return JSON only:
 {"observations":[{"attribute":"visible fact","value":"short visible description"}],"inferences":[{"attribute":"soft style inference","value":"description"}],"unknowns":["unverified detail"],"preserve_features":["2 to 4 visible features that should be preserved"]}.
 Only report visible image facts as observations. Do not identify people, infer brands, or claim unreadable text."""
-        body = json.dumps({
-            "model": self.vision_model,
-            "input": [{"role": "user", "content": [{"type": "input_text", "text": system}, {"type": "input_image", "image_url": preview}]}],
-            "max_output_tokens": 500, "thinking": {"type": "disabled"},
-        }).encode("utf-8")
         try:
-            request = urllib.request.Request("https://ark.cn-beijing.volces.com/api/v3/responses", data=body, headers={"Authorization": f"Bearer {self.vision_api_key}", "Content-Type": "application/json"}, method="POST")
-            with urllib.request.urlopen(request, timeout=45) as response:
-                raw = json.loads(response.read().decode("utf-8"))
-            text = self._response_text(raw)
-            parsed = json.loads(text[text.find("{"):text.rfind("}") + 1])
+            parsed = request_json(self.vision_api_key, self.vision_model, system, None, 900, content=[{"type": "input_text", "text": "Observe the attached reference image. Return JSON."}, {"type": "input_image", "image_url": preview}])
             features = [str(item).strip() for item in parsed.get("preserve_features", []) if isinstance(item, str) and item.strip()][:4]
             return {"status": "completed", "observations": parsed.get("observations", [])[:4], "inferences": parsed.get("inferences", [])[:2], "unknowns": parsed.get("unknowns", [])[:4], "preserve_features": features, "summary": "Visual reference features were extracted with the configured observation model."}
         except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
@@ -261,18 +233,7 @@ Only report visible image facts as observations. Do not identify people, infer b
 
     @staticmethod
     def _response_text(raw: dict[str, Any]) -> str:
-        if isinstance(raw.get("output_text"), str) and raw["output_text"].strip():
-            return raw["output_text"].strip()
-        parts = []
-        for item in raw.get("output", []):
-            if isinstance(item, dict):
-                for content in item.get("content", []):
-                    if isinstance(content, dict) and isinstance(content.get("text"), str):
-                        parts.append(content["text"])
-        result = "\n".join(parts).strip()
-        if not result:
-            raise ValueError("Reference analysis returned no text")
-        return result
+        return response_text(raw)
 
     def _capability_router(
         self,

@@ -3,7 +3,7 @@ from unittest.mock import patch
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from backend.app.agent.planner import DeepSeekControlPlanner
+from backend.app.agent.planner import ArkControlPlanner
 from backend.app.agent.context import ContextEnrichmentAgent
 from backend.app.agent.prompt_compiler import PromptCompiler
 from backend.app.agent.video_capabilities import VideoCapabilityRegistry
@@ -145,7 +145,7 @@ class AgentLoopTests(unittest.TestCase):
         self.assertEqual(completed.creative_spec.enriched_context["status"], "ready_for_compile")
 
     def test_live_control_plan_is_validated_and_preserves_source_prompt(self):
-        planner = DeepSeekControlPlanner(api_key="test-key")
+        planner = ArkControlPlanner(api_key="test-key")
         planner._request_json = lambda *_: {
             "objective": "Show a red e-bike unfolding across a rainy Tokyo alley sequence.",
             "immutable_constraints": ["red e-bike shape", "visible logo", "rainy Tokyo alley"],
@@ -185,7 +185,7 @@ class AgentLoopTests(unittest.TestCase):
         }
         prompt = "A red e-bike unfolds in a rainy Tokyo alley. Keep the logo consistent."
         state = create_project_state(prompt, control_planner=planner)
-        self.assertEqual(state.creative_spec.planning_source, "deepseek")
+        self.assertEqual(state.creative_spec.planning_source, "doubao_seed_2_1_pro")
         self.assertEqual(state.creative_spec.source_prompt, prompt)
         self.assertEqual(state.creative_spec.goal, "Show a red e-bike unfolding across a rainy Tokyo alley sequence.")
         self.assertEqual(state.creative_spec.recommended_iterations, 1)
@@ -200,14 +200,14 @@ class AgentLoopTests(unittest.TestCase):
         self.assertEqual(state.creative_spec.generation_spec["quality_target"], "high")
         self.assertEqual([(shot["start_seconds"], shot["end_seconds"]) for shot in state.creative_spec.shots], [(0.0, 2.0), (2.0, 8.0), (8.0, 10.0)])
         self.assertEqual(state.creative_spec.evidence_sampling["planned_duration_seconds"], 10.0)
-        self.assertEqual(state.creative_spec.production_direction["source"], "deepseek")
+        self.assertEqual(state.creative_spec.production_direction["source"], "doubao_seed_2_1_pro")
         compiled_prompt = ArkVideoGenerator._generation_prompt(state, None, include_output_hints=False)
         self.assertIn("Agent camera direction: Begin wide enough", compiled_prompt)
         self.assertIn("Do not obscure the unfolding mechanism", compiled_prompt)
 
     def test_live_planner_can_choose_one_or_four_semantic_beats(self):
         """Storyboard count is a planning decision, not a UI or evaluator template."""
-        planner = DeepSeekControlPlanner(api_key="test-key")
+        planner = ArkControlPlanner(api_key="test-key")
 
         def plan_for(shots):
             shot_ids = [shot["shot_id"] for shot in shots]
@@ -250,7 +250,7 @@ class AgentLoopTests(unittest.TestCase):
 
     def test_live_planner_can_compile_a_six_beat_fifteen_second_commercial(self):
         """A concise commercial brief can need more than a setup/action/payoff trio."""
-        planner = DeepSeekControlPlanner(api_key="test-key")
+        planner = ArkControlPlanner(api_key="test-key")
         shots = [
             ("S1", "establish", "readable", "Open on a heat-hazed summer table; frame the unopened ice-cream pack as the visual problem.", "The product pack and hot visual context are readable."),
             ("S2", "detail", "readable", "Move into the pack opening and reveal the ice cream texture without obscuring the product.", "The product reveal and wrapper state are visible."),
@@ -283,7 +283,7 @@ class AgentLoopTests(unittest.TestCase):
         self.assertIn("wrapper tear", state.creative_spec.production_direction["sound_design"])
 
     def test_live_planning_fallback_is_visible_in_the_audit_trail(self):
-        planner = DeepSeekControlPlanner(api_key="test-key")
+        planner = ArkControlPlanner(api_key="test-key")
 
         def unavailable(*_args):
             raise OSError("simulated network failure")
@@ -291,7 +291,7 @@ class AgentLoopTests(unittest.TestCase):
         planner._request_json = unavailable
         state = create_project_state("Show one static product detail.", control_planner=planner)
         self.assertEqual(state.creative_spec.planning_source, "fallback")
-        self.assertIn("DeepSeek did not return", state.creative_spec.planning_notice)
+        self.assertIn("Doubao Seed 2.1 Pro did not return", state.creative_spec.planning_notice)
         self.assertTrue(any(item.get("event") == "control_planner_fallback" for item in state.history))
 
     def test_sampling_policy_is_bound_to_planned_shots(self):
@@ -508,7 +508,7 @@ class AgentLoopTests(unittest.TestCase):
                     scores=RubricScores(4.0, 4.0, 4.0, 4.0, 4.0, 0.0),
                     bad_cases=[],
                     summary="The same retained evidence was evaluated with a valid score schema.",
-                    observation_source="doubao_seed_2_lite",
+                    observation_source="doubao_seed_2_1_pro",
                     observation_notice="Initial evaluation completed.",
                 )
 
@@ -925,7 +925,7 @@ class AgentLoopTests(unittest.TestCase):
             ],
             "summary": "The core action is not visibly completed, so repair is required.",
         }, {"F1": "S1", "F2": "S2", "F3": "S3"})
-        self.assertEqual(report.observation_source, "doubao_seed_2_lite")
+        self.assertEqual(report.observation_source, "doubao_seed_2_1_pro")
         self.assertEqual(report.bad_cases[0].severity.value, "blocking")
         self.assertEqual(report.scores.instruction_following, 2.2)
 
@@ -952,10 +952,10 @@ class AgentLoopTests(unittest.TestCase):
         self.assertEqual(report.atomic_checks[1]["status"], "insufficient_evidence")
 
     def test_repair_planner_normalizes_single_text_list_fields(self):
-        from backend.app.agent.planner import DeepSeekPlanner
+        from backend.app.agent.planner import ArkRepairPlanner
 
-        self.assertEqual(DeepSeekPlanner._string_list("camera_control", "expected_improvement"), ["camera_control"])
-        self.assertEqual(DeepSeekPlanner._string_list(["instruction_following"], "expected_improvement"), ["instruction_following"])
+        self.assertEqual(ArkRepairPlanner._string_list("camera_control", "expected_improvement"), ["camera_control"])
+        self.assertEqual(ArkRepairPlanner._string_list(["instruction_following"], "expected_improvement"), ["instruction_following"])
 
     def test_seed_responses_output_is_extracted(self):
         self.assertEqual(

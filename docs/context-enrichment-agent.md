@@ -1,6 +1,6 @@
 # Context Enrichment Agent — MVP
 
-This is the pre-generation Agent layer for Video Control Loop Agent. It improves the completeness of the approved input before DeepSeek produces a control plan; it does not replace the later quality-control loop.
+This is the pre-generation Agent layer for Video Control Loop Agent. It improves the completeness of the approved input before Doubao Seed 2.1 Pro produces a control plan; it does not replace the later quality-control loop.
 
 ## Goal
 

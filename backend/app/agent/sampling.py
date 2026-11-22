@@ -102,7 +102,7 @@ def validate_evidence_sampling_policy(
     rationale = value.get("rationale")
     if not isinstance(rationale, str) or not rationale.strip() or len(rationale.strip()) > 240:
         raise ValueError(f"{field}.rationale must be concise text")
-    result: Dict[str, Any] = {"focus_shot_ids": focus, "critical_moments": moments, "rationale": rationale.strip(), "source": "deepseek"}
+    result: Dict[str, Any] = {"focus_shot_ids": focus, "critical_moments": moments, "rationale": rationale.strip(), "source": "doubao_seed_2_1_pro"}
     raw_windows = value.get("shot_windows")
     if raw_windows is not None:
         if not isinstance(raw_windows, list) or len(raw_windows) != len(allowed):

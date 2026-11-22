@@ -501,8 +501,8 @@ window.I18N_CATALOG = [
     "决策已就绪"
   ],
   [
-    "DeepSeek plan",
-    "DeepSeek 规划"
+    "Doubao Seed 2.1 Pro plan",
+    "豆包 Seed 2.1 Pro 规划"
   ],
   [
     "Demo fixture",
@@ -1455,5 +1455,13 @@ window.I18N_CATALOG = [
   [
     "Video generation is not configured. Check your local model settings.",
     "视频生成尚未配置，请检查本地模型设置。"
+  ],
+  [
+    "Archived model result",
+    "历史模型结果"
+  ],
+  [
+    "Archived model plan",
+    "历史模型规划"
   ]
 ];
