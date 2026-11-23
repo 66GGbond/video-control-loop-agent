@@ -208,7 +208,10 @@ class CharacterDialogueHTTPTests(unittest.TestCase):
             self.assertEqual(status,200,data);paid.assert_not_called()
         self.assertEqual(data['status'],'awaiting_first_video')
         self.assertEqual(data['conversation'][-2]['text'],'确认生成第一个视频')
-        state.creative_spec.character_reference_plan={'status':'awaiting_clarification'};self.store.save(visitor,state)
+        state.creative_spec.character_reference_plan={'status':'awaiting_clarification'}
+        import hashlib
+        lock=local.server.VISITOR_LOCKS[int(hashlib.sha256(visitor.encode()).hexdigest(),16)%len(local.server.VISITOR_LOCKS)]
+        with lock:self.store.save(visitor,state)
         self.assertEqual(self.request('/api/confirm-generation',{'message':'确认'})[0],400)
 
     def test_answer_updates_main_plan_and_character_style_without_paid_generation(self):

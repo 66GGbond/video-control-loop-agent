@@ -17,7 +17,7 @@ def build_asset_manifest(assets: Iterable[dict[str, Any]] | None) -> list[dict[s
     """Build a stable, safe-to-log manifest from normalized user assets."""
     ordered: list[tuple[int, int, dict[str, Any]]] = []
     for fallback_order, asset in enumerate(assets or [], start=1):
-        if not isinstance(asset, dict):
+        if not isinstance(asset, dict) or asset.get("local_only"):
             continue
         try:
             input_order = int(asset.get("input_order", fallback_order))

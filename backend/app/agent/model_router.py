@@ -14,6 +14,7 @@ def fingerprint(state):
     spec=state.creative_spec
     assets=[]
     for asset in spec.multimodal_assets or ([spec.reference_asset] if spec.reference_asset else []):
+        if asset.get("local_only"):continue
         assets.append({k:hashlib.sha256(v.encode()).hexdigest() if k in {'data_url','preview_data_url'} and isinstance(v,str) else v for k,v in asset.items()})
     value={'routing_skill':hashlib.sha256(SKILL.read_bytes()).hexdigest(),'brief':spec.source_prompt,'goal':spec.goal,'output':spec.generation_spec,'assets':assets,
            'constraints':spec.immutable_character_attributes,'direction':spec.production_direction,'shots':spec.shots,'reference_manifest':spec.asset_manifest,

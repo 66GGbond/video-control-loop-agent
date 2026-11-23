@@ -1,5 +1,7 @@
 // Interface copy only. User briefs and model prose are not machine-translated.
 window.I18N_CATALOG = [
+ ["Local preview","本地预览"],
+ ["References","参考素材"], ["Import references","导入图片、音频或本地视频"], ["Folder / Skill","文件夹 / Skill"], ["Import folder / Skill","导入文件夹与 Skill"], ["Local video preview only","本地视频仅预览，双击查看"],
  ['Your video is saved. Evidence preparation failed. Send “retry” to continue without generating another video.','视频已保留，质检画面准备失败。发送“重试”即可继续处理，无需重新生成视频。'],
  ["Enable Agent autonomous mode","开启 Agent 自主代理"], ["Pause Agent autonomous mode","暂停 Agent 自主代理"],
  ["The video is generating and will appear in the workspace.","视频正在生成，完成后会在主界面展示。"],

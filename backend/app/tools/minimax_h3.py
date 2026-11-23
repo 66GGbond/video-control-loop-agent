@@ -53,7 +53,7 @@ class MiniMaxH3Generator:
         return bool(self.api_key and self.model in self.supported_models and self.resolution in self.supported_resolutions)
 
     def select_tool(self, state: ProjectState) -> Dict[str, Any]:
-        return self.capabilities.route(state.creative_spec.reference_asset, state.creative_spec.multimodal_assets)
+        return self.capabilities.route(state.creative_spec.reference_asset, [a for a in state.creative_spec.multimodal_assets if not a.get("local_only")])
 
     def submit(self, state: ProjectState, version_id: str, repair_task: RepairTask | None = None) -> GenerationJob:
         if not self.available():
@@ -162,12 +162,12 @@ class MiniMaxH3Generator:
         output = validate_generation_spec(contract.get("output_spec") or state.creative_spec.generation_spec)
         if output["duration_seconds"] > 15:
             raise ValueError("MiniMax H3 supports at most 15 seconds per clip")
-        assets = state.creative_spec.multimodal_assets or []
+        assets = [a for a in state.creative_spec.multimodal_assets if not a.get("local_only")] or []
         if sum(a.get("media_type") == "image" for a in assets) > 9 or sum(a.get("media_type") == "audio" for a in assets) > 3 or any(a.get("media_type") == "video" for a in assets):
             raise ValueError("References exceed the implemented H3 adapter limits")
         content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
         if selection["request_mode"] == "reference_to_video":
-            assets = state.creative_spec.multimodal_assets or (
+            assets = [a for a in state.creative_spec.multimodal_assets if not a.get("local_only")] or (
                 [state.creative_spec.reference_asset] if state.creative_spec.reference_asset else []
             )
             image_count = 0

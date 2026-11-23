@@ -62,7 +62,7 @@ class MiniMaxHailuoGenerator:
         )
 
     def select_tool(self, state: ProjectState) -> Dict[str, Any]:
-        return self.capabilities.route(state.creative_spec.reference_asset, state.creative_spec.multimodal_assets)
+        return self.capabilities.route(state.creative_spec.reference_asset, [a for a in state.creative_spec.multimodal_assets if not a.get("local_only")])
 
     def submit(self, state: ProjectState, version_id: str, repair_task: RepairTask | None = None) -> GenerationJob:
         if not self.available():
@@ -188,7 +188,7 @@ class MiniMaxHailuoGenerator:
 
     @staticmethod
     def _first_usable_image(state: ProjectState) -> str | None:
-        assets = state.creative_spec.multimodal_assets or (
+        assets = [a for a in state.creative_spec.multimodal_assets if not a.get("local_only")] or (
             [state.creative_spec.reference_asset] if state.creative_spec.reference_asset else []
         )
         for asset in assets:

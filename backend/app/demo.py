@@ -237,10 +237,12 @@ def create_enriched_project_state(
     target_market: str = "",
     multimodal_assets: list[dict] | None = None,
     ui_language: str = "zh",
+    uploaded_skills: list[dict] | None = None,
 ) -> ProjectState:
     """Run the bounded pre-generation agent before compiling a control plan."""
     agent = context_agent or ContextEnrichmentAgent()
     context = agent.enrich(prompt, reference_asset, target_market, multimodal_assets)
+    context["uploaded_skills"] = uploaded_skills or []
     context["ui_language"] = "en" if ui_language == "en" else "zh"
     if context["status"] == "needs_user_confirmation":
         spec = CreativeSpec(
@@ -299,7 +301,7 @@ def present(state: ProjectState) -> dict:
     spec = state_json.get("creative_spec")
     if isinstance(spec, dict):
         for asset in spec.get("multimodal_assets", []) or []:
-            if isinstance(asset, dict) and asset.get("media_type") == "audio":
+            if isinstance(asset, dict) and asset.get("media_type") in {"audio","video"}:
                 asset.pop("data_url", None)
     # Dataclass serialization preserves score fields but not the `overall()`
     # method. The browser receives this explicit diagnostic value; audio is

@@ -40,6 +40,7 @@ def model_cards():
 
 def candidate_cards(state):
     assets=state.creative_spec.multimodal_assets or ([state.creative_spec.reference_asset] if state.creative_spec.reference_asset else [])
+    assets=[a for a in assets if not a.get('local_only')]
     counts={kind:sum(a.get('media_type')==kind for a in assets) for kind in ('image','audio','video')}
     duration=state.creative_spec.generation_spec.get('duration_seconds',4)
     cheap=low_cost_requested(state.creative_spec.source_prompt)

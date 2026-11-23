@@ -17,6 +17,7 @@ class SeedanceVideoGenerator(ArkVideoGenerator):
 
     def select_tool(self,state):
         assets=state.creative_spec.multimodal_assets or ([state.creative_spec.reference_asset] if state.creative_spec.reference_asset else [])
+        assets=[a for a in assets if not a.get('local_only')]
         profile={'profile_id':self.card['provider_id']+'_multimodal_v1','lifecycle':'active','supports_reference_images':True,
                  'supports_reference_audio':True,'supports_reference_video':True,'verification_notice':'基于官方 API 声明；生成效果未做跨模型对照实测。'}
         return {'route':'reference_to_video' if assets else 'text_to_video','request_mode':'reference_to_video' if assets else 'text_to_video',
@@ -28,6 +29,7 @@ class SeedanceVideoGenerator(ArkVideoGenerator):
         output=validate_generation_spec(state.creative_spec.generation_spec)
         if output['duration_seconds']>self.card['max_seconds']: raise ValueError('Video duration exceeds selected model limits')
         assets=sorted(state.creative_spec.multimodal_assets or ([state.creative_spec.reference_asset] if state.creative_spec.reference_asset else []),key=lambda a:a.get('input_order',1))
+        assets=[a for a in assets if not a.get('local_only')]
         for kind,limit in (('image','max_images'),('audio','max_audio'),('video','max_video')):
             matching=[a for a in assets if a.get('media_type')==kind]
             if len(matching)>self.card[limit]: raise ValueError('Reference count exceeds selected model limits')

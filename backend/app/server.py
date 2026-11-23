@@ -19,10 +19,11 @@ from http.cookies import SimpleCookie
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 from urllib import request as urllib_request
 
 from .sessions import SessionStore
+from .reference_imports import skill_files
 from .conversation import record_exchange
 from .agent.planner import ArkControlPlanner
 from .agent.context import ContextEnrichmentAgent
@@ -103,6 +104,7 @@ def start_user_directed_revision(original: ProjectState, instruction: str, langu
         target_market,
         characters.source_assets(original.creative_spec),
         ui_language=language or original.creative_spec.enriched_context.get("ui_language", "zh"),
+        uploaded_skills=original.creative_spec.enriched_context.get("uploaded_skills",[]),
     )
 
     # Keep the version chain immutable.  The fresh state only replaces the
@@ -189,6 +191,15 @@ class DemoHandler(SimpleHTTPRequestHandler):
     @visitor_request
     def do_GET(self):
         path = urlparse(self.path).path
+        if path == '/api/local-reference-video':
+            query=parse_qs(urlparse(self.path).query)
+            try:
+                if query.get('project',[''])[0]!=self.state.project_id:raise ValueError()
+                asset=self.state.creative_spec.multimodal_assets[int(query.get('index',['-1'])[0])]
+                if not asset.get('local_only'):raise ValueError()
+                content=base64.b64decode(asset['data_url'].split(',',1)[1],validate=True)
+            except (ValueError,IndexError,KeyError):return self._json(404,{'error':'本地视频不存在或项目已切换。'})
+            self.send_response(200);self.send_header('Content-Type',asset['mime_type']);self.send_header('Content-Length',str(len(content)));self.send_header('Cache-Control','private, no-store');self.end_headers();self.wfile.write(content);return
         if path == '/api/projects':
             return self._json(HTTPStatus.OK, Projects(SESSIONS).list(self.visitor_id))
         if path.startswith('/api/project-preview/'):
@@ -308,6 +319,23 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 return self._json(HTTPStatus.OK, present(self.state))
             if path in {"/api/create-project", "/api/reset"} and self.state.status == "generating_video":
                 return self._json(HTTPStatus.CONFLICT, {"error": "A video is being generated. Please wait for the result."})
+            if path == '/api/import-references':
+                if self.state.status in {'generating_video','generated_video_ready'} or characters.running(self.state,SESSIONS,self.visitor_id):
+                    raise ValueError('请等待当前生成任务完成后再追加参考素材。')
+                payload=self._read_json()
+                incoming=self._normalise_multimodal_assets(payload)
+                spec=self.state.creative_spec
+                combined=[*characters.source_assets(spec),*incoming]
+                if len({a['name'].casefold() for a in combined})!=len(combined):raise ValueError('参考素材名称不能重复。')
+                if len(combined)>50:raise ValueError('参考素材总数不能超过50个。')
+                if any(sum(a.get('media_type')==kind for a in combined)>limit for kind,limit in [('image',30),('audio',10),('video',10)]):raise ValueError('参考素材数量超出上限。')
+                new_skills=skill_files(payload.get('skill_files',[]))
+                skills=skill_files([*spec.enriched_context.get('uploaded_skills',[]),*new_skills])
+                spec.multimodal_assets=[{**a,'input_order':i+1} for i,a in enumerate(combined)]
+                spec.reference_asset=next((a for a in combined if a['media_type']=='image'),None)
+                spec.enriched_context['uploaded_skills']=skills
+                spec.character_reference_plan={};spec.video_model_selection={};spec.generation_contract={};spec.evaluation_contract={}
+                return self._json(200,present(self.state))
             if path == "/api/create-project":
                 payload = self._read_json()
                 prompt = str(payload.get("prompt", "")).strip()
@@ -321,6 +349,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     prompt, reference_asset, CONTROL_PLANNER, CONTEXT_AGENT,
                     multimodal_assets=assets,
                     ui_language=payload.get("language", "zh"),
+                    uploaded_skills=skill_files(payload.get("skill_files",[])),
                 )
                 if previous.execution_mode=='autopilot' and not previous.autopilot_paused:
                     self.state.execution_mode='autopilot';self.state.autopilot_paused=False
@@ -348,6 +377,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     target_market,
                     characters.source_assets(self.state.creative_spec),
                     ui_language=payload.get("language", original.creative_spec.enriched_context.get("ui_language", "zh")),
+                        uploaded_skills=original.creative_spec.enriched_context.get("uploaded_skills",[]),
                 )
                 self.state.project_id = original.project_id
                 record_exchange(self.state, target_market, original)
@@ -444,6 +474,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                         target_market,
                         characters.source_assets(original.creative_spec),
                         ui_language=payload.get("language", original.creative_spec.enriched_context.get("ui_language", "zh")),
+                        uploaded_skills=original.creative_spec.enriched_context.get("uploaded_skills",[]),
                     )
                     self.state.project_id = original.project_id
                     record_exchange(self.state, instruction, previous)
@@ -783,7 +814,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
             {'brief':original.creative_spec.source_prompt},500,timeout=60)
         market=str(result.get('target_market','')).strip()
         if not market:raise ValueError('自主规划暂未确定目标地区，请重试。')
-        self.state=create_enriched_project_state(original.creative_spec.source_prompt,characters.source_reference(original.creative_spec),CONTROL_PLANNER,CONTEXT_AGENT,market,characters.source_assets(original.creative_spec),ui_language=original.creative_spec.enriched_context.get('ui_language','zh'))
+        self.state=create_enriched_project_state(original.creative_spec.source_prompt,characters.source_reference(original.creative_spec),CONTROL_PLANNER,CONTEXT_AGENT,market,characters.source_assets(original.creative_spec),ui_language=original.creative_spec.enriched_context.get('ui_language','zh'),uploaded_skills=original.creative_spec.enriched_context.get('uploaded_skills',[]))
         self.state.project_id=original.project_id;self.state.project_name=original.project_name
         self.state.conversation=original.conversation
         self.state.execution_mode='autopilot';self.state.autopilot_paused=False
@@ -943,6 +974,15 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 })
             elif mime_type in {"video/mp4", "video/quicktime"}:
                 videos += 1
+                if raw.get('local_only') is True:
+                    if not isinstance(data_url,str) or not data_url.startswith('data:'+mime_type+';base64,') or len(data_url)>45*1024*1024:
+                        raise ValueError('本地视频格式无效或超过32MB。')
+                    try:decoded=base64.b64decode(data_url.split(',',1)[1],validate=True)
+                    except (ValueError,binascii.Error):raise ValueError('本地视频无法读取。')
+                    duration=float(raw.get('duration_seconds',0))
+                    if not decoded or len(decoded)>32*1024*1024 or not 0<duration<3600 or videos>10:raise ValueError('本地视频过大或时长无效。')
+                    normalised.append({'name':name,'mime_type':mime_type,'media_type':'video','local_only':True,'data_url':data_url,'size':str(len(decoded)),'duration_seconds':duration,'role':'local_preview','input_order':input_order,'prompt_mentions':prompt_mentions})
+                    continue
                 url = str(raw.get("url", ""))
                 parsed = urlparse(url)
                 duration = float(raw.get("duration_seconds", 0))

@@ -28,10 +28,11 @@ const human = value => String(value ?? "").replaceAll("_", " ").replace(/\b\w/g,
 const escapeHTML = value => String(value ?? "").replace(/[&<>'"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[char]);
 
 const isImageReference = file => file?.type?.startsWith("image/");
+const isSkillReference=file=>/\.(md|txt|json|ya?ml)$/i.test(file.name);
 const isVideoReference = file => file?.type?.startsWith("video/");
 const isAudioReference = file => ["audio/mpeg", "audio/mp3", "audio/wav", "audio/x-wav"].includes(file?.type);
-const referenceFileKey = file => `${file.name}:${file.size}:${file.lastModified}:${file.type}`;
-const mentionLabel = file => `@${file.name}`;
+const referenceFileKey = file => `${file.webkitRelativePath||file.name}:${file.size}:${file.lastModified}:${file.type}`;
+const mentionLabel = file => `@${isSkillReference(file)?file.webkitRelativePath||file.name:file.name}`;
 const promptEditor = () => document.querySelector("#creative-prompt");
 
 function serializeEditorNode(node) {
@@ -401,9 +402,12 @@ function renderReferenceAttachments() {
       item.append(preview);
       item.addEventListener("mouseenter", () => previewImageReference(file, item));
       item.addEventListener("mouseleave", hideImageReferencePreview);
+    } else if(isSkillReference(file)){
+      const badge=document.createElement('span');badge.textContent=/SKILL\.md$/i.test(file.name)?'Skill':'TXT';item.append(badge);item.title=file.webkitRelativePath||file.name;
     } else if (isVideoReference(file)) {
       const icon = document.createElement("span");icon.textContent = "▶";icon.className = "reference-video-icon";
-      item.title = file.name;item.append(icon);
+      item.title = I18n.text('Local video preview only');item.append(icon);
+      item.addEventListener('dblclick',event=>{event.preventDefault();const dialog=document.createElement('dialog');dialog.className='video-player-dialog';const video=document.createElement('video');video.controls=true;video.src=file.reference_url||URL.createObjectURL(file);const close=document.createElement('button');close.type='button';close.textContent=I18n.text('Close');close.onclick=()=>dialog.close();dialog.append(close,video);document.body.append(dialog);dialog.addEventListener('close',()=>{video.pause();URL.revokeObjectURL(video.src);dialog.remove();});dialog.showModal();});
     } else {
       const icon = document.createElement("span");
       icon.className = "reference-audio-icon";
@@ -856,7 +860,7 @@ function renderCreativeAgent(state, spec, enrichedContext) {
       ? "Add a constraint or clarification while you answer the required question above."
       : "Add a constraint or request a revision for the next eligible version.";
   composer.dataset.placeholder=I18n.text("Message the Agent · Enter to send, Shift+Enter for a new line");
-  attachments.hidden = !isInitialBrief;
+  attachments.hidden = !selectedReferenceItems.length;
   submit.textContent = isInitialBrief ? "Generate control plan" : "Send update";
   const budgetControl = document.querySelector("#repair-budget-control");
   budgetControl.hidden = !hasPlan;
@@ -1227,9 +1231,16 @@ function renderReferenceMedia(spec) {
   document.querySelector("#reference-title").textContent = reference
     ? (referenceMedia.length > 1 ? `${I18n.text("Attached")} · ${referenceLabel}` : reference.name)
     : (referenceMedia.length ? `${I18n.text("Attached")} · ${referenceLabel}` : I18n.text("No reference media"));
-  document.querySelector("#reference-detail").textContent = referenceMedia.length
+  document.querySelector("#reference-detail").textContent = referenceMedia.filter(a=>!a.local_only).length
     ? "Reference materials attached to video generation."
     : "The Agent will preserve constraints extracted from your brief.";
+  for(const asset of referenceVideos.filter(a=>a.local_only)){
+    const button=document.createElement('button');button.type='button';button.className='local-video-preview';button.textContent='▶ '+asset.name+' · '+I18n.text('Local preview');
+    button.addEventListener('click',()=>{const dialog=document.createElement('dialog');dialog.className='video-player-dialog';const video=document.createElement('video');video.controls=true;video.src='/api/local-reference-video?project='+encodeURIComponent(renderedState.project_id)+'&index='+referenceMedia.indexOf(asset);const close=document.createElement('button');close.type='button';close.textContent=I18n.text('Close');close.onclick=()=>dialog.close();dialog.append(close,video);document.body.append(dialog);dialog.onclose=()=>{video.pause();dialog.remove();};dialog.showModal();});
+    document.querySelector('#reference-detail').append(button);
+  }
+  const skills=spec.enriched_context?.uploaded_skills||[];
+  if(skills.length){const tag=document.createElement('span');tag.className='imported-skills';tag.textContent='Skill · '+skills.map(s=>s.path).join('、');document.querySelector('#reference-detail').append(tag);}
   const referenceVisual = document.querySelector("#reference-visual");
   const referencePreview = document.querySelector("#reference-preview");
   referenceVisual.hidden = !(reference && reference.preview_data_url);
@@ -1421,22 +1432,23 @@ document.querySelector("#video-player-dialog").addEventListener("close", () => {
   player.removeAttribute("src");
 });
 
-document.querySelector("#reference-media").addEventListener("change", event => {
+function importReferenceFiles(event) {
   const incoming = Array.from(event.target.files || []);
   const existing = new Set(selectedReferenceItems.map(referenceFileKey));
   // `@filename` is the user-facing binding syntax.  A second asset with the
   // same filename would make that binding ambiguous, even when its bytes are
   // different, so keep filenames unique inside one creative brief.
-  const existingNames = new Set(selectedReferenceItems.map(file => file.name.toLowerCase()));
+  const existingNames = new Set(selectedReferenceItems.map(file => (isSkillReference(file)?file.webkitRelativePath||file.name:file.name).toLowerCase()));
   let imageCount = selectedReferenceItems.filter(isImageReference).length;
   let audioCount = selectedReferenceItems.filter(isAudioReference).length;
   const rejected = [];
   incoming.forEach(file => {
-    if (!isImageReference(file) && !isAudioReference(file)) {
-      rejected.push(`${file.name}: use an image, MP3, or WAV file`);
+    if(file.webkitRelativePath&&file.webkitRelativePath.split("/").some(p=>p.startsWith(".")||["node_modules","__pycache__"].includes(p)))return;
+    if (!isImageReference(file) && !isAudioReference(file) && !isVideoReference(file) && !isSkillReference(file)) {
+      rejected.push(`${file.name}: 不支持此文件格式`);
       return;
     }
-    if (existingNames.has(file.name.toLowerCase())) {
+    if (existingNames.has((isSkillReference(file)?file.webkitRelativePath||file.name:file.name).toLowerCase())) {
       rejected.push(`${file.name}: filenames must be unique for @ reference binding`);
       return;
     }
@@ -1449,17 +1461,35 @@ document.querySelector("#reference-media").addEventListener("change", event => {
       rejected.push(`${file.name}: maximum 10 audio files`);
       return;
     }
+    if(isVideoReference(file)&&(file.size>32*1024*1024||selectedReferenceItems.filter(isVideoReference).length>=10)){rejected.push(file.name+': 最多10个视频，每个不超过32MB');return;}
+    if(isSkillReference(file)&&(file.size>32000||selectedReferenceItems.filter(isSkillReference).length>=50)){rejected.push(file.name+': 文本文件过大或数量超过50个');return;}
     selectedReferenceItems.push(file);
     existing.add(referenceFileKey(file));
-    existingNames.add(file.name.toLowerCase());
+    existingNames.add((isSkillReference(file)?file.webkitRelativePath||file.name:file.name).toLowerCase());
     if (isImageReference(file)) imageCount += 1;
-    else audioCount += 1;
+    else if(isAudioReference(file)) audioCount += 1;
   });
   event.target.value = "";
   renderReferenceAttachments();
   updateMentionMenu();
+  document.querySelector('#brief-attachments').hidden=!selectedReferenceItems.length;
   if (rejected.length) I18n.alert(rejected.join("\n"));
-});
+}
+document.querySelector('#reference-media').addEventListener('change',importReferenceFiles);
+document.querySelector('#reference-folder').addEventListener('change',importReferenceFiles);
+async function readLocalVideo(file){
+  if(file.reference_url)return {name:file.name,mime_type:file.type,url:file.reference_url,duration_seconds:file.duration_seconds,size:0};
+  const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(file);});
+  const duration=await new Promise((resolve,reject)=>{const video=document.createElement('video');const url=URL.createObjectURL(file);video.preload='metadata';video.onloadedmetadata=()=>{URL.revokeObjectURL(url);resolve(video.duration);};video.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('无法读取视频，请使用 MP4/MOV 文件。'));};video.src=url;});
+  return {name:file.name,mime_type:file.type||'video/mp4',data_url:data,duration_seconds:duration,size:file.size,local_only:true};
+}
+async function serializeImports(prompt){
+  const skill_files=await Promise.all(selectedReferenceItems.filter(isSkillReference).map(async file=>({path:file.webkitRelativePath||file.name,text:await file.text()})));
+  const multimodal_assets=await Promise.all(selectedReferenceItems.filter(f=>!isSkillReference(f)).map(async(file,index)=>{
+    const asset=isImageReference(file)?await readReferenceFile(file):isVideoReference(file)?await readLocalVideo(file):await readAudioReferenceFile(file);
+    return {...asset,role:isImageReference(file)?'Visual reference':isVideoReference(file)?'reference_video':'Audio reference',input_order:index+1,prompt_mentions:promptMentionsFor(file,prompt)};
+  }));return {skill_files,multimodal_assets};
+}
 document.querySelector("#creative-prompt").addEventListener("input", () => {
   // Typing after an over-limit warning replaces the temporary visual marker.
   // The next submission evaluates the edited content again.
@@ -1503,21 +1533,14 @@ document.querySelector("#project-form").addEventListener("submit", async event =
   submit.disabled = true;
   submit.textContent = isInitialBrief ? "Analyzing brief…" : "Updating Agent…";
   try {
+    if(!isInitialBrief&&selectedReferenceItems.length)render(await endpoint('/api/import-references',{method:'POST',body:JSON.stringify(await serializeImports(prompt))}));
     if (isInitialBrief) {
       // Promise.all preserves the order of this array.  It is deliberately
       // built from the visual attachment strip rather than from media-type
       // buckets, so `image → audio → image` remains that exact order all the
       // way into the provider request.
-      const multimodalAssets = await Promise.all(selectedReferenceItems.map(async (file, inputOrder) => {
-        const asset = isImageReference(file)
-          ? await readReferenceFile(file)
-          : isVideoReference(file) ? {name:file.name,mime_type:file.type,url:file.reference_url,duration_seconds:file.duration_seconds,size:0} : await readAudioReferenceFile(file);
-        asset.role = isImageReference(file) ? "Visual reference" : isVideoReference(file) ? "reference_video" : "Audio reference";
-        asset.input_order = inputOrder + 1;
-        asset.prompt_mentions = promptMentionsFor(file, prompt);
-        return asset;
-      }));
-      render(await endpoint("/api/create-project", { method: "POST", body: JSON.stringify({ prompt, multimodal_assets: multimodalAssets, language:I18n.language }) }));
+      const imports=await serializeImports(prompt);
+      render(await endpoint('/api/create-project',{method:'POST',body:JSON.stringify({prompt,...imports,language:I18n.language})}));
     } else if(renderedState.status==='generated_video_ready'&&/^(重试|继续|重新准备|重试证据|retry)[。！!,.\s]*$/i.test(prompt)){
       await prepareGeneratedEvidence(renderedState);
     } else if(renderedState.status==='awaiting_context_confirmation'){
