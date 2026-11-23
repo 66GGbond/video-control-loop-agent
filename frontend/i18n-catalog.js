@@ -1,5 +1,6 @@
 // Interface copy only. User briefs and model prose are not machine-translated.
 window.I18N_CATALOG = [
+ ['Your video is saved. Evidence preparation failed. Send “retry” to continue without generating another video.','视频已保留，质检画面准备失败。发送“重试”即可继续处理，无需重新生成视频。'],
  ["Enable Agent autonomous mode","开启 Agent 自主代理"], ["Pause Agent autonomous mode","暂停 Agent 自主代理"],
  ["The video is generating and will appear in the workspace.","视频正在生成，完成后会在主界面展示。"],
  ["The video is ready. Shall I check its quality?","视频已生成，是否开始质检？"],

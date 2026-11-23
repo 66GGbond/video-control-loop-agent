@@ -57,6 +57,28 @@ class LocalServerTests(unittest.TestCase):
         with lock:
             self.store.save(visitor, state)
 
+    def test_generated_evidence_uses_current_shots_and_keeps_video_on_failure(self):
+        import base64
+        visitor=self.session();state=create_demo_state('A cowboy and a horse at a ranch')
+        state.status='generated_video_ready';state.current_version_id='v1'
+        state.current_video_asset={'local_video_url':'/api/generated-video/v1','name':'retained.mp4'}
+        self.store.save(visitor,state)
+        shot=state.creative_spec.shots[0]['shot_id']
+        frames=[{'data_url':'data:image/jpeg;base64,'+base64.b64encode(b'\xff\xd8fixture\xff\xd9').decode(),'timestamp':i,'expected_shot_id':shot,'sampling_reason':'Verify planned action'} for i in range(3)]
+        with patch.object(server,'RUNTIME',Path(self.tmp.name)),patch.object(server.VIDEO_GENERATOR,'submit') as paid:
+            status,bad=self.request('/api/register-generated-video',{'frames':[{**f,'expected_shot_id':'unknown'} for f in frames]})
+            self.assertEqual(status,400,bad)
+            retained=self.request('/api/state')[1]
+            self.assertEqual(retained['status'],'generated_video_ready')
+            self.assertEqual(retained['current_video_asset']['name'],'retained.mp4')
+            status,data=self.request('/api/register-generated-video',{'frames':frames})
+            self.assertEqual(status,200,data);paid.assert_not_called()
+            self.assertEqual(data['status'],'ready_for_evaluation')
+            stored=self.store.load(visitor)
+            self.assertEqual(len(stored.evaluation_frame_records),3)
+            self.assertTrue(all(Path(f['path']).exists() for f in stored.evaluation_frame_records))
+            self.assertEqual(data['current_video_asset']['local_video_url'],'/api/generated-video/v1')
+
     def test_character_stage_gates_video_and_reset_during_image_work(self):
         from backend.app.image_tasks import ImageTasks
         visitor = self.session(); self.plan(visitor)

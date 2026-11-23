@@ -1001,8 +1001,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
             return f"v{int(version_id[1:]) + 1}"
         raise ValueError("The current video version is invalid")
 
-    @staticmethod
-    def _store_evaluation_frames(raw_frames) -> list[dict[str, object]]:
+    def _store_evaluation_frames(self, raw_frames) -> list[dict[str, object]]:
         if not isinstance(raw_frames, list) or not 3 <= len(raw_frames) <= 6:
             raise ValueError("The browser must provide 3 to 6 sampled keyframes for visual evaluation")
         decoded: list[tuple[str, float, bytes, str, str]] = []

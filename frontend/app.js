@@ -1518,6 +1518,8 @@ document.querySelector("#project-form").addEventListener("submit", async event =
         return asset;
       }));
       render(await endpoint("/api/create-project", { method: "POST", body: JSON.stringify({ prompt, multimodal_assets: multimodalAssets, language:I18n.language }) }));
+    } else if(renderedState.status==='generated_video_ready'&&/^(重试|继续|重新准备|重试证据|retry)[。！!,.\s]*$/i.test(prompt)){
+      await prepareGeneratedEvidence(renderedState);
     } else if(renderedState.status==='awaiting_context_confirmation'){
       render(await endpoint('/api/confirm-context',{method:'POST',body:JSON.stringify({target_market:prompt,language:I18n.language})}));
     } else if(['ready_for_evaluation','repair_uploaded'].includes(renderedState.status)&&/^(确认|可以|好的|好|是|开始|开始质检|运行质检|质检|yes)[。！!,.\s]*$/i.test(prompt)){
@@ -1632,12 +1634,17 @@ async function prepareGeneratedEvidence(state) {
     const frames = await extractEvaluationFrames(await response.blob(), contractSampling || state.creative_spec?.evidence_sampling);
     const prepared = await endpoint("/api/register-generated-video", { method: "POST", body: JSON.stringify({ frames }) });
     render(prepared);
-    if (prepared.execution_mode !== "autopilot" || !prepared.autopilot_paused) {
+    if (autopilotIsRunning(prepared)) {
       await runQualityLoop();
       await advanceAutopilot(renderedState);
     }
   } catch (error) {
-    I18n.alert(error.message);
+    const log=document.querySelector('#agent-conversation');
+    let notice=log.querySelector('[data-evidence-error]');
+    if(!notice){notice=document.createElement('article');notice.className='agent-message agent-message-system';notice.dataset.evidenceError='true';log.append(notice);}
+    notice.textContent=I18n.text('Your video is saved. Evidence preparation failed. Send “retry” to continue without generating another video.');
+    log.hidden=false;document.querySelector('#creative-agent-feed').scrollTop=document.querySelector('#creative-agent-feed').scrollHeight;
+    setCreativeAgentOpen(true);
   } finally {
     generatedEvidencePending = false;
   }
