@@ -173,7 +173,7 @@ class CharacterReferencesTests(unittest.TestCase):
             chars.assess(self.state)
         with patch('backend.app.character_references.request_json',return_value=self.people) as decision,patch('backend.app.image_tasks.request_json',return_value={'recommended_model':PRO,'reason':'quality'}):
             chars.answer(self.state,'统一精致3D',self.store,self.visitor)
-            self.assertIn('统一精致3D',decision.call_args.args[3]['creative_answers'])
+            self.assertIn('统一精致3D',[a.get('answer') if isinstance(a,dict) else a for a in decision.call_args.args[3]['creative_answers']])
         plan=self.state.creative_spec.character_reference_plan
         self.assertEqual(plan['status'],'planned');self.assertEqual(plan['view_count'],3)
         prompts=[chars.document(self.state.creative_spec,p,'n')['nodes'][0]['text'] for p in plan['characters']]
@@ -227,7 +227,8 @@ class CharacterDialogueHTTPTests(unittest.TestCase):
             status,data=self.request('/api/revise-brief',{'instruction':'精致3D','language':'zh'})
             self.assertEqual(status,200,data);paid.assert_not_called()
         self.assertEqual(data['project_id'],original.project_id)
-        self.assertIn('精致3D',data['creative_spec']['source_prompt'])
+        self.assertEqual(data['creative_spec']['source_prompt'],original.creative_spec.source_prompt)
+        self.assertEqual(data['creative_spec']['enriched_context']['creative_answers'][-1]['answer'],'精致3D')
         self.assertEqual(data['creative_spec']['character_reference_plan']['status'],'planned')
         self.assertEqual(data['creative_spec']['character_reference_plan']['view_count'],3)
         self.assertEqual(data['conversation'][0]['id'],'q')

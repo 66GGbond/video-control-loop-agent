@@ -71,7 +71,7 @@ def assess(state):
     style=plan['shared_style']
     evidence=style.get('evidence','')
     confidence=style.get('confidence',0)
-    user_text=spec.source_prompt+'\n'+'\n'.join(spec.enriched_context.get('creative_answers',[]))
+    user_text=spec.source_prompt+'\n'+'\n'.join(a.get('answer','') if isinstance(a,dict) else str(a) for a in spec.enriched_context.get('creative_answers',[]))
     style_clear=(style.get('explicit') is True and isinstance(style.get('description'),str) and 0<len(style['description'].strip())<=1500
                  and isinstance(evidence,str) and bool(evidence.strip()) and evidence.strip() in user_text
                  and isinstance(confidence,(int,float)) and not isinstance(confidence,bool) and .85<=confidence<=1)
@@ -253,7 +253,7 @@ def answer(state, text, store, visitor):
     if plan.get('status')!='awaiting_clarification':
         raise ValueError('没有待确认的创意问题。')
     state.conversation.append({'id':uuid.uuid4().hex,'at':datetime.now(timezone.utc).isoformat(),'role':'user','text':text})
-    state.creative_spec.enriched_context.setdefault('creative_answers',[]).append(text)
+    state.creative_spec.enriched_context.setdefault('creative_answers',[]).append({'kind':'character','question':(plan.get('questions') or [''])[0],'answer':text})
     state.creative_spec.character_reference_plan={}
     try:
         result=prepare(state,store,visitor)

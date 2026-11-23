@@ -33,12 +33,16 @@ def unique_skills(skills):
     return result
 
 def failure_message(error, language='zh'):
+    cause=getattr(error,'__cause__',None)
+    if isinstance(error,json.JSONDecodeError) or isinstance(cause,json.JSONDecodeError):
+        return ('Your answer is saved. The model returned invalid structured data; planning has not completed. You can retry without repeating your answer.' if language=='en' else '你的回答已保存。模型返回的结构化结果格式异常，规划尚未完成；重试即可继续，不需要重新回答。')
     if isinstance(error, OSError) or isinstance(getattr(error,'__cause__',None),OSError):
         return ('The model connection timed out or was interrupted. Your brief and Skills are saved. Send “retry” to continue.' if language=='en' else '模型连接超时或中断。你的需求和 Skill 已保存，发送“重试”即可继续。')
     return ('Skill processing or planning did not pass validation. Your inputs are saved; send “retry” to continue.' if language=='en' else 'Skill 处理或创作规划未通过检查。你的输入已保存，发送“重试”即可继续。')
 
-def brief_signature(prompt,skills,assets,language='zh'):
-    return hashlib.sha256(json.dumps({'policy':POLICY_VERSION,'brief':prompt,'skills':skills,'assets':reference_inputs(assets),'language':language},sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+def brief_signature(prompt,skills,assets,language='zh',answers=None,requirements=None):
+    answers=[a for a in (answers or []) if isinstance(a,dict) and a.get('kind')!='character']
+    return hashlib.sha256(json.dumps({'policy':POLICY_VERSION,'brief':prompt,'skills':skills,'assets':reference_inputs(assets),'language':language,**({'answers':answers} if answers else {}),**({'requirements':requirements} if requirements else {})},sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 
 def reference_inputs(assets):
     return [{k:a.get(k) for k in ('name','media_type','role','prompt_mentions','local_only')} | {'content_sha256':hashlib.sha256(str(a.get('data_url') or a.get('preview_data_url') or a.get('url','')).encode()).hexdigest()} for a in assets]
@@ -53,7 +57,7 @@ def has_prepared_brief(state):
     spec=state.creative_spec;context=spec.enriched_context;skills=context.get('uploaded_skills',[])
     if not skills:return True
     basis=context.get('skill_brief',{})
-    return basis.get('status')=='verified' and basis.get('input_signature')==brief_signature(spec.source_prompt,skills,source_assets(spec),context.get('ui_language','zh'))
+    return basis.get('status')=='verified' and basis.get('input_signature')==brief_signature(spec.source_prompt,skills,source_assets(spec),context.get('ui_language','zh'),context.get('creative_answers'),context.get('resolved_requirements'))
 
 def prepare_brief(state):
     """Execute the combined source materials before any creative plan exists."""
@@ -61,7 +65,7 @@ def prepare_brief(state):
     if result:
         from .character_references import source_assets
         spec=state.creative_spec;context=spec.enriched_context
-        context['skill_brief']={**result,'input_signature':brief_signature(spec.source_prompt,context['uploaded_skills'],source_assets(spec),context.get('ui_language','zh'))}
+        context['skill_brief']={**result,'input_signature':brief_signature(spec.source_prompt,context['uploaded_skills'],source_assets(spec),context.get('ui_language','zh'),context.get('creative_answers'),context.get('resolved_requirements'))}
         context.pop('skill_execution',None)
     return state.creative_spec.enriched_context.get('skill_brief')
 
@@ -73,6 +77,7 @@ def inputs(state,repair=None):
             'shots':spec.shots,'constraints':spec.immutable_character_attributes,'direction':spec.production_direction,
             'output':spec.generation_spec,'references':spec.asset_manifest,'repair':getattr(repair,'prompt',''),
             'creative_answers':spec.enriched_context.get('creative_answers',[]),
+            'resolved_requirements':spec.enriched_context.get('resolved_requirements',{}),
             'source_references':reference_inputs(source_assets(spec)),
             'skill_brief':spec.enriched_context.get('skill_brief')}
 
@@ -105,23 +110,27 @@ Seedance formatting: organize subject/action/scene/style/camera/sound, bind real
         if not key:raise ValueError('执行上传的 Skill 需要配置决策模型。')
         system+='\nWhen phase is brief, no creative plan exists yet: first execute all applicable Skill steps against the entire original brief and references, resolve conflicts in favor of explicit user choices, and produce the complete enriched creative basis that the planner will consume. When phase is video, preserve the previously verified skill_brief work and adapt it to the current approved shots, settings and character references; do not independently invent a different creative plan.'
         translation=bool(re.search(r'(?:对白|对话|台词|dialogue)[^\n。]{0,24}(?:英语|英文|English)',spec.source_prompt,re.I))
+        condense=spec.enriched_context.get('resolved_requirements',{}).get('dialogue_edit_policy')=='condense_preserve_meaning'
         payload['dialogue_policy']='Translate all quoted dialogue to English with complete source/text mapping; the explicit user language overrides Skill verbatim defaults.' if translation else 'Preserve quoted dialogue verbatim.'
         if translation:system+='\nThe user explicitly requests English spoken dialogue. Translate source quotes to English and include every source/text pair in dialogue_map. Preserve meaning and speakers. This explicit language request overrides literal Chinese dialogue and Skill defaults. Use each English text literally in optimized_prompt; do not require Chinese source quotes in it.'
+        if condense:
+            payload['dialogue_policy']='The user explicitly permits condensing dialogue while preserving meaning. Keep source quotes as references, map every source line to its adapted text in dialogue_map, preserve speakers, dramatic intent and required spoken language. Do not require literal original dialogue. Audit semantic fidelity and feasible pacing instead.'
+            system+='\n'+payload['dialogue_policy']+' This accepted decision overrides earlier verbatim instructions and Skill defaults.'
         for attempt in range(2):
             result=checkpoint if attempt==0 and checkpoint else request_json(key,configured_model(),system,{**payload,'corrections':feedback},16000,timeout=240,stream=True)
             prompt=result.get('optimized_prompt','');steps=result.get('execution_steps');paths=[s['path'] for s in skills]
             if not isinstance(prompt,str) or not prompt.strip() or len(prompt)>50000:raise ValueError('Skill 未返回有效的最终视频提示词。')
             if result.get('applied_skills')!=paths or not isinstance(steps,list) or not steps or any(not isinstance(s,dict) or not isinstance(s.get('step'),str) or not s['step'].strip() or not isinstance(s.get('result'),str) or not s['result'].strip() for s in steps):raise ValueError('Skill 执行记录不完整。')
             quotes=payload['verbatim_quotes']
-            if translation:
+            if translation or condense:
                 mapping=result.get('dialogue_map',[])
                 if not isinstance(mapping,list) or any(not isinstance(item,dict) for item in mapping):raise ValueError('对白语言转换记录不完整。')
                 mapped={item.get('source'):item.get('text') for item in mapping}
-                if any(not isinstance(mapped.get(q),str) or not mapped[q].strip() or re.search(r'[\u4e00-\u9fff]',mapped[q]) for q in quotes):raise ValueError('没有完整保留并转换用户指定语言的对白。')
+                if any(not isinstance(mapped.get(q),str) or not mapped[q].strip() or (translation and re.search(r'[\u4e00-\u9fff]',mapped[q])) for q in quotes):raise ValueError('对白对应关系或指定语言不完整。')
                 quotes=[mapped[q] for q in quotes]
             missing=[q for q in quotes if q not in prompt]
             spec.enriched_context['skill_execution']['draft']=result
-            audit=request_json(key,configured_model(),'''Audit the proposed Skill execution against the full user brief, Skills and selected video output. Return JSON {"passed":true|false,"missing":[specific missing mandatory requirements],"checks":[{"requirement":"rule","evidence":"exact excerpt from execution_steps or optimized_prompt"}]}. Reject dropped dialogue, scenes/actions/sounds, omitted required physical performance/camera details or unsupported claims. A generic summary or checklist assertion is not evidence. Distinguish process deliverables in execution_steps from final generation instructions. Follow inputs.dialogue_policy: when English dialogue was explicitly requested, check every source/text translation and its literal use, not Chinese quote inclusion. Resolve conflicting Skill duration defaults in favor of user's selected output. Check feasibility; reject silently cramming unperformable dialogue into the selected duration. Never claim generation actually achieved these instructions.''',{'inputs':payload,'execution':result},4000,timeout=120,stream=True)
+            audit=request_json(key,configured_model(),'''Audit the proposed Skill execution against the full user brief, Skills and selected video output. Return JSON {"passed":true|false,"missing":[specific missing mandatory requirements],"checks":[{"requirement":"rule","evidence":"exact excerpt from execution_steps or optimized_prompt"}]}. Reject unauthorized dropped dialogue, scenes/actions/sounds, omitted required physical performance/camera details or unsupported claims. A generic summary or checklist assertion is not evidence. Distinguish process deliverables in execution_steps from final generation instructions. Follow inputs.dialogue_policy: explicit permission to condense dialogue overrides literal preservation. In that case validate semantic fidelity and source/adaptation coverage, not literal original inclusion. When English dialogue was explicitly requested, check every source/text translation and its literal use, not Chinese quote inclusion. Resolve conflicting Skill duration defaults in favor of user's selected output. Check feasibility; reject silently cramming unperformable dialogue into the selected duration. Never claim generation actually achieved these instructions.''',{'inputs':payload,'execution':result},4000,timeout=120,stream=True)
             spec.enriched_context['skill_execution']['audit']=audit
             if not isinstance(audit.get('missing'),list) or any(not isinstance(m,str) for m in audit['missing']):raise ValueError('Skill 检查结果格式无效。')
             if not isinstance(result.get('conflicts'),list) or any(not isinstance(m,str) for m in result['conflicts']):raise ValueError('Skill 冲突处理记录无效。')

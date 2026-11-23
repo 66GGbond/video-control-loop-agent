@@ -28,7 +28,7 @@ from .skill_execution import prepare as prepare_skill_prompt
 from .skill_execution import PREPARATION_STATES, has_prepared_brief, require_prepared_brief, clarify_failure
 from .reference_imports import skill_files
 from .conversation import record_exchange
-from .chat_turns import respond as respond_to_question,recover_editing_question
+from .chat_turns import respond as respond_to_question,recover_editing_question,decide as decide_chat_turn,record_reply,reconcile_last_answer
 from .agent.planner import ArkControlPlanner
 from .agent.context import ContextEnrichmentAgent
 from .agent.generation_spec import validate_brief_duration
@@ -109,6 +109,8 @@ def start_user_directed_revision(original: ProjectState, instruction: str, langu
         characters.source_assets(original.creative_spec),
         ui_language=language or original.creative_spec.enriched_context.get("ui_language", "zh"),
         uploaded_skills=original.creative_spec.enriched_context.get("uploaded_skills",[]),
+        creative_answers=original.creative_spec.enriched_context.get("creative_answers",[]),
+        resolved_requirements=original.creative_spec.enriched_context.get("resolved_requirements",{}),
     )
 
     # Keep the version chain immutable.  The fresh state only replaces the
@@ -262,6 +264,29 @@ class DemoHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         try:
+            if path=='/api/reconcile-last-answer':
+                if not reconcile_last_answer(self.state):raise ValueError('没有可安全校正的已保存回答。')
+                return self._json(200,{**present(self.state),'conversation_only':True})
+            if path=='/api/chat':
+                body=self._read_json();text=str(body.get('message','')).strip();language=body.get('language','zh')
+                if not text:raise ValueError('请输入消息。')
+                try:decision=decide_chat_turn(self.state,text,language)
+                except (ValueError,OSError,KeyError,TypeError):
+                    record_reply(self.state,text,'这条消息暂时未能完成理解，你的需求和待确认问题都没有改变，请重发这条消息。' if language!='en' else 'I could not interpret this turn. Your brief and pending choice are unchanged; please resend it.')
+                    return self._json(200,{**present(self.state),'conversation_only':True})
+                self.chat_decision=decision;intent=decision['intent']
+                if intent=='discuss':
+                    record_reply(self.state,text,decision['reply']);return self._json(200,{**present(self.state),'conversation_only':True})
+                if intent=='brief' and self.state.status!='ready_for_brief':raise ValueError('已有项目中的新需求应作为修改处理。')
+                if intent in {'confirm_generation','confirm_quality'}:
+                    path='/api/confirm-generation';body={'message':text,**({'action':'quality'} if intent=='confirm_quality' else {})};self.chat_action='quality' if intent=='confirm_quality' else 'generate'
+                elif intent=='answer' and decision['pending_question']['kind']=='context':path='/api/confirm-context';body={'target_market':text,'language':language}
+                elif intent=='retry' and self.state.status=='generated_video_ready':
+                    record_reply(self.state,text,'正在重新准备已生成视频的质检画面。');self.chat_action='retry_evidence'
+                    return self._json(200,present(self.state))
+                elif intent=='brief':path='/api/create-project';body={**body,'prompt':text}
+                else:path='/api/revise-brief';body={'instruction':text,'language':language}
+                self.chat_body=body
             if self.state.status in PREPARATION_STATES and path in {'/api/recommend-video-model','/api/confirm-video-model','/api/configure-generation','/api/plan-character-references','/api/generate-character-references','/api/attach-character-references','/api/approve-plan','/api/confirm-generation','/api/generate-video'}:
                 raise ValueError('请先在对话中完成 Skill 与全部需求的整合和创作规划。')
             if path=='/api/explain-skill-conflict':
@@ -405,7 +430,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "There is no pending context question for this project"})
                 payload = self._read_json()
                 target_market = str(payload.get("target_market", "")).strip()
-                if respond_to_question(self.state,target_market,payload.get('language',self.state.creative_spec.enriched_context.get('ui_language','zh'))):
+                if not hasattr(self,'chat_decision') and respond_to_question(self.state,target_market,payload.get('language',self.state.creative_spec.enriched_context.get('ui_language','zh'))):
                     return self._json(200,{**present(self.state),'conversation_only':True})
                 if not target_market:
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "A target market or region is required for this seasonal request"})
@@ -419,6 +444,8 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     characters.source_assets(self.state.creative_spec),
                     ui_language=payload.get("language", original.creative_spec.enriched_context.get("ui_language", "zh")),
                         uploaded_skills=original.creative_spec.enriched_context.get("uploaded_skills",[]),
+                        creative_answers=original.creative_spec.enriched_context.get("creative_answers",[]),
+                        resolved_requirements=original.creative_spec.enriched_context.get("resolved_requirements",{}),
                 )
                 self.state.project_id = original.project_id
                 record_exchange(self.state, target_market, original)
@@ -493,21 +520,27 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     raise ValueError('当前没有待恢复的创作规划。')
                 if not instruction:
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "Enter a revision before sending it to the Agent"})
-                if path=='/api/revise-brief' and respond_to_question(self.state,instruction,payload.get('language',self.state.creative_spec.enriched_context.get('ui_language','zh'))):
+                if path=='/api/revise-brief' and not hasattr(self,'chat_decision') and respond_to_question(self.state,instruction,payload.get('language',self.state.creative_spec.enriched_context.get('ui_language','zh'))):
                     return self._json(200,{**present(self.state),'conversation_only':True})
+                if getattr(self,'chat_decision',{}).get('dialogue_edit_policy'):
+                    self.state.creative_spec.enriched_context.setdefault('resolved_requirements',{})['dialogue_edit_policy']=self.chat_decision['dialogue_edit_policy']
                 if self.state.status in PREPARATION_STATES:
                     import re
                     original=self.state;spec=original.creative_spec;context=spec.enriched_context
-                    retry=bool(re.fullmatch(r'(?:重试|继续|重新处理|重新规划|retry|continue)[。！!,.\s]*',instruction,re.I))
+                    turn=getattr(self,'chat_decision',{})
+                    retry=turn.get('intent')=='retry' if turn else bool(re.fullmatch(r'(?:重试|继续|重新处理|重新规划|retry|continue)[。！!,.\s]*',instruction,re.I))
                     if original.status=='awaiting_skill_clarification' and retry:return self._json(200,present(self.state))
-                    prompt=spec.source_prompt if retry else spec.source_prompt+'\n\nAdditional user direction: '+instruction
+                    is_answer=turn.get('intent')=='answer' if turn else original.status=='awaiting_skill_clarification'
+                    prompt=spec.source_prompt if retry or is_answer else spec.source_prompt+'\n\nAdditional user direction: '+instruction
                     answers=list(context.get('creative_answers',[]))
-                    if original.status=='awaiting_skill_clarification':answers.append({'question':context['skill_clarification']['question'],'answer':instruction})
+                    requirements=dict(context.get('resolved_requirements',{}))
+                    if is_answer:answers.append({'question':context['skill_clarification']['question'],'question_id':turn.get('question_id'),'answer':instruction,'summary':turn.get('summary',instruction)})
+                    if turn.get('dialogue_edit_policy'):requirements['dialogue_edit_policy']=turn['dialogue_edit_policy']
                     validate_brief_duration(prompt)
                     self.state=create_enriched_project_state(prompt,characters.source_reference(spec),CONTROL_PLANNER,CONTEXT_AGENT,
                         multimodal_assets=characters.source_assets(spec),ui_language=payload.get('language',context.get('ui_language','zh')),
                         uploaded_skills=context.get('uploaded_skills',[]),skill_checkpoint=context.get('skill_execution') if retry else None,
-                        prepared_basis=context.get('skill_brief') if retry else None,creative_answers=answers)
+                        prepared_basis=context.get('skill_brief') if retry else None,creative_answers=answers,resolved_requirements=requirements)
                     self.state.project_id=original.project_id;self.state.project_name=original.project_name
                     for field in ('current_version_id','current_video_asset','version_reviews','generation_jobs','evaluation_history','iterations_used'):
                         setattr(self.state,field,getattr(original,field))
@@ -516,10 +549,6 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     if path=='/api/retry-planning':self.state.conversation.pop(-2)
                     return self._json(200,present(self.state))
                 if self.state.creative_spec.character_reference_plan.get('status')=='awaiting_clarification':
-                    original=self.state
-                    self.state=start_user_directed_revision(original,instruction,payload.get('language'))
-                    self.state.creative_spec.character_reference_plan=original.creative_spec.character_reference_plan
-                    self.state.creative_spec.enriched_context['creative_answers']=list(original.creative_spec.enriched_context.get('creative_answers',[]))
                     characters.answer(self.state,instruction,SESSIONS,self.visitor_id)
                     return self._json(HTTPStatus.OK,present(self.state))
                 previous = copy(self.state)
@@ -540,6 +569,8 @@ class DemoHandler(SimpleHTTPRequestHandler):
                         characters.source_assets(original.creative_spec),
                         ui_language=payload.get("language", original.creative_spec.enriched_context.get("ui_language", "zh")),
                         uploaded_skills=original.creative_spec.enriched_context.get("uploaded_skills",[]),
+                        creative_answers=original.creative_spec.enriched_context.get("creative_answers",[]),
+                        resolved_requirements=original.creative_spec.enriched_context.get("resolved_requirements",{}),
                     )
                     self.state.project_id = original.project_id
                     record_exchange(self.state, instruction, previous)
@@ -890,6 +921,10 @@ class DemoHandler(SimpleHTTPRequestHandler):
         self.state.execution_mode='autopilot';self.state.autopilot_paused=False
 
     def _json(self, status: HTTPStatus, data: dict):
+        if 'creative_spec' in data and hasattr(self,'chat_decision') and not getattr(self,'chat_decision_recorded',False):
+            self.state.history.append({'phase':'conversation','event':'conversation_turn_understood','payload':self.chat_decision})
+            data['history']=self.state.history;self.chat_decision_recorded=True
+        if getattr(self,'chat_action',None) and 'creative_spec' in data:data['chat_action']=self.chat_action
         if hasattr(self, "visitor_id") and not getattr(self, 'read_only_archive', False):
             SESSIONS.save(self.visitor_id, self.state)
             if data.get('project_id') == self.state.project_id and 'creative_spec' in data:
@@ -927,6 +962,8 @@ class DemoHandler(SimpleHTTPRequestHandler):
         self.wfile.write(data)
 
     def _read_json(self) -> dict:
+        if hasattr(self,'chat_body'):
+            body=self.chat_body;del self.chat_body;return body
         content_length = int(self.headers.get("Content-Length", "0"))
         if content_length < 0 or content_length > MAX_REQUEST_BYTES:
             raise ValueError("This request contains too much reference media. Please use smaller images or shorter audio files.")

@@ -256,11 +256,13 @@ def create_enriched_project_state(
     skill_checkpoint: dict | None = None,
     prepared_basis: dict | None = None,
     creative_answers: list[dict] | None = None,
+    resolved_requirements: dict | None = None,
 ) -> ProjectState:
     """Run the bounded pre-generation agent before compiling a control plan."""
     from .skill_execution import prepare_brief,has_prepared_brief,clarify_failure
     source_context={'uploaded_skills':uploaded_skills or [],'ui_language':'en' if ui_language=='en' else 'zh'}
     source_context['creative_answers']=creative_answers or []
+    source_context['resolved_requirements']=resolved_requirements or {}
     skill_history=[]
     if uploaded_skills:
         # No storyboard, recommendation or character job may precede this step.

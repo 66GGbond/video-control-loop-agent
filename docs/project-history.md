@@ -53,3 +53,7 @@ Skill 和规划长响应使用流式读取，只有收到完整完成事件才�
 ## 追问与需求修改
 
 创作 Agent 区分解释/能力/状态追问和实际修改、选择回答。追问只追加对话，不改变原 prompt 或待确认项，不触发 Skill、人物参考、模型推荐或视频生成。明确的礼貌修改请求仍可进入规划；对话模型暂时失败时也不会将问题兜底当作修改。当前不提供已有视频的时间线剪辑、裁切、拼接或自动多片段制作，文案必须使用“精简剧本/台词”等实际能力。旧版误把明确剪辑能力追问追加到 prompt 的失败记录可恢复原需求，原错误轨迹保留。
+
+## Contextual conversation controller
+
+The composer sends every turn to /api/chat. A model reads the original brief, recent dialogue, accepted decisions, stage and pending question ID before choosing a discussion, answer, update, retry or explicit production confirmation. Answers require the correct question ID; actions require evidence from the current message. Answers are kept separately from the source brief. A character-style answer directly updates character planning. Explicit permission to condense dialogue changes validation to semantic fidelity and source/adaptation coverage. Invalid model JSON is reported as a structured-output error rather than a missing user answer.

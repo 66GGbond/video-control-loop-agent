@@ -1551,28 +1551,11 @@ async function submitChat(event) {
   let accepted=false;
   try {
     if(!isInitialBrief&&files.length&&!outgoing.imported){render(await endpoint('/api/import-references',{method:'POST',body:JSON.stringify(await serializeImports(prompt,files))}));outgoing.imported=true;}
-    if (isInitialBrief) {
-      // Promise.all preserves the order of this array.  It is deliberately
-      // built from the visual attachment strip rather than from media-type
-      // buckets, so `image → audio → image` remains that exact order all the
-      // way into the provider request.
-      const imports=await serializeImports(prompt,files);
-      render(await endpoint('/api/create-project',{method:'POST',body:JSON.stringify({prompt,...imports,language:I18n.language})}));
-    } else if(['skill_preparation_required','skill_preparation_failed','planning_failed','awaiting_skill_clarification'].includes(renderedState.status)){
-      render(await endpoint('/api/revise-brief',{method:'POST',body:JSON.stringify({instruction:prompt,language:I18n.language})}));
-    } else if(renderedState.status==='generated_video_ready'&&/^(重试|继续|重新准备|重试证据|retry)[。！!,.\s]*$/i.test(prompt)){
-      await prepareGeneratedEvidence(renderedState);
-    } else if(renderedState.status==='awaiting_context_confirmation'){
-      render(await endpoint('/api/confirm-context',{method:'POST',body:JSON.stringify({target_market:prompt,language:I18n.language})}));
-    } else if(['ready_for_evaluation','repair_uploaded'].includes(renderedState.status)&&/^(确认|可以|好的|好|是|开始|开始质检|运行质检|质检|yes)[。！!,.\s]*$/i.test(prompt)){
-      render(await endpoint('/api/confirm-generation',{method:'POST',body:JSON.stringify({message:prompt,action:'quality'})}));
-      await runQualityLoop();
-    } else if(renderedState.creative_spec.character_reference_plan?.status!=='awaiting_clarification'&&/^(确认|确认生成|确认生成视频|确认生成第一个视频|开始|开始生成|开始生成视频|生成视频|生成第一个视频|可以|好的|好|是|yes|generate|start)[。！!,.\s]*$/i.test(prompt)){
-      render(await endpoint('/api/confirm-generation',{method:'POST',body:JSON.stringify({message:prompt})}));
-      await generateVideo(null,true);
-    } else {
-      render(await endpoint("/api/revise-brief", { method: "POST", body: JSON.stringify({ instruction: prompt, language:I18n.language }) }));
-    }
+    const imports=isInitialBrief?await serializeImports(prompt,files):{};
+    render(await endpoint('/api/chat',{method:'POST',body:JSON.stringify({message:prompt,...imports,language:I18n.language})}));
+    if(renderedState.chat_action==='generate')await generateVideo(null,true);
+    else if(renderedState.chat_action==='quality')await runQualityLoop();
+    else if(renderedState.chat_action==='retry_evidence')await prepareGeneratedEvidence(renderedState);
     accepted=true;
     if(!renderedState.conversation_only&&autopilotIsRunning(renderedState))await advanceAutopilot(renderedState);
     if (!renderedState.conversation_only&&["planning_ready", "awaiting_first_video", "awaiting_repair_upload"].includes(renderedState.status)) await recommendCurrentVideoModel();

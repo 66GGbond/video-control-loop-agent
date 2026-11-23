@@ -8,6 +8,18 @@ from backend.app.agent.model_catalog import SEEDANCE_25
 from backend.app.agent.prompt_compiler import PromptCompiler
 
 class SkillExecutionTests(unittest.TestCase):
+    def test_explicit_permission_to_condense_overrides_literal_dialogue_check(self):
+        self.state.creative_spec.enriched_context['resolved_requirements']={'dialogue_edit_policy':'condense_preserve_meaning'}
+        result={**self.result,'dialogue_map':[{'source':'我在这里。','text':'我在。'},{'source':'不要离开。','text':'别走。'}],'optimized_prompt':'凯瑟琳说{我在。}；希斯克利夫说{别走。}。'}
+        audit={**self.audit,'checks':[{'requirement':'保留原意','evidence':'别走。'}]}
+        with patch.dict(os.environ,{'ARK_API_KEY':'offline'}),patch('backend.app.skill_execution.request_json',side_effect=[result,audit]) as model:
+            self.assertEqual(prepare(self.state)['status'],'verified')
+        self.assertIn('condens',model.call_args.args[3]['inputs']['dialogue_policy'])
+
+    def test_json_format_error_is_not_reported_as_a_missing_user_answer(self):
+        import json
+        from backend.app.skill_execution import failure_message
+        self.assertIn('结构化结果格式异常',failure_message(json.JSONDecodeError('bad','x',0)))
     def test_only_a_real_audited_creative_conflict_becomes_one_question(self):
         self.state.creative_spec.enriched_context['skill_execution']={'audit':{'missing':['完整对白时长与片长冲突']}}
         answer={'requires_user_decision':True,'reason':'完整对白预计超出目标片长。','question':'保留全部对白分段制作，还是保留片长并精简对白？'}

@@ -3,7 +3,7 @@ import os
 import unittest
 from unittest.mock import patch
 from backend.app.demo import create_demo_state
-from backend.app.chat_turns import respond,recover_editing_question
+from backend.app.chat_turns import respond,recover_editing_question,decide,pending_question
 from tests import test_local_server as local
 
 
@@ -47,6 +47,36 @@ class ChatTurnHTTPTests(unittest.TestCase):
     cleanup=local.LocalServerTests.cleanup
     request=local.LocalServerTests.request
     session=local.LocalServerTests.session
+
+    def test_unified_chat_binds_an_answer_without_appending_it_to_the_brief(self):
+        visitor=self.session();state=create_demo_state('原始英语剧本，30秒。');state.status='awaiting_skill_clarification'
+        state.creative_spec.enriched_context['skill_clarification']={'question':'是否允许保留原意地精简台词？'}
+        self.store.save(visitor,state)
+        text='可以适当保留原意的基础上缩减对话，让这部分内容在30s的视频里节奏不会过于紧凑'
+        decision={'intent':'answer','question_id':pending_question(state)['id'],'summary':'保留原意，精简对白以适配30秒','evidence':text,'dialogue_edit_policy':'condense_preserve_meaning','reply':''}
+        with patch.dict(os.environ,{'ARK_API_KEY':'offline'}),patch('backend.app.chat_turns.request_json',return_value=decision),patch.object(local.server,'create_enriched_project_state',return_value=create_demo_state(state.creative_spec.source_prompt)) as planning:
+            status,data=self.request('/api/chat',{'message':text})
+        self.assertEqual(status,200,data)
+        self.assertEqual(planning.call_args.args[0],state.creative_spec.source_prompt)
+        self.assertEqual(planning.call_args.kwargs['creative_answers'][-1]['answer'],text)
+        self.assertEqual(planning.call_args.kwargs['resolved_requirements']['dialogue_edit_policy'],'condense_preserve_meaning')
+
+    def test_unified_chat_uses_context_for_plain_text_questions_and_preserves_pending_choice(self):
+        visitor=self.session();state=create_demo_state('原始剧本');state.status='awaiting_skill_clarification'
+        state.creative_spec.enriched_context['skill_clarification']={'question':'是否精简对白？'};self.store.save(visitor,state)
+        decision={'intent':'discuss','question_id':'','summary':'','evidence':'','dialogue_edit_policy':None,'reply':'这里是指调整剧本，没有剪辑现有视频的功能。'}
+        with patch.dict(os.environ,{'ARK_API_KEY':'offline'}),patch('backend.app.chat_turns.request_json',return_value=decision) as model,patch.object(local.server,'create_enriched_project_state') as planning:
+            status,data=self.request('/api/chat',{'message':'解释一下刚才的意思'})
+        self.assertEqual(status,200);planning.assert_not_called();model.assert_called_once()
+        self.assertTrue(data['conversation_only']);self.assertEqual(data['status'],state.status)
+        self.assertEqual(data['creative_spec']['source_prompt'],'原始剧本')
+
+    def test_unified_chat_rejects_unbound_answer_without_starting_any_work(self):
+        visitor=self.session();state=create_demo_state('原始剧本');self.store.save(visitor,state)
+        decision={'intent':'answer','question_id':'invented','summary':'擅自修改','evidence':'好的','dialogue_edit_policy':None,'reply':''}
+        with patch.dict(os.environ,{'ARK_API_KEY':'offline'}),patch('backend.app.chat_turns.request_json',return_value=decision),patch.object(local.server,'create_enriched_project_state') as planning:
+            status,data=self.request('/api/chat',{'message':'好的'})
+        self.assertTrue(data['conversation_only']);planning.assert_not_called()
 
     def test_question_does_not_start_skill_planning_images_or_video(self):
         visitor=self.session();state=create_demo_state('英语对白，30秒。');state.status='awaiting_skill_clarification'
