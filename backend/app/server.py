@@ -429,6 +429,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     multimodal_assets=assets,
                     ui_language=payload.get("language", "zh"),
                     uploaded_skills=skill_files(payload.get("skill_files",[])),
+                    autonomous=previous.execution_mode=='autopilot' and not previous.autopilot_paused,
                 )
                 if previous.execution_mode=='autopilot' and not previous.autopilot_paused:
                     self.state.execution_mode='autopilot';self.state.autopilot_paused=False
@@ -510,9 +511,8 @@ class DemoHandler(SimpleHTTPRequestHandler):
                         "payload": {"message": "User requested a pause after the current provider action completes."},
                     })
                     return self._json(HTTPStatus.OK, present(self.state))
-                allowed = {"ready_for_brief", "awaiting_context_confirmation", "planning_ready", "awaiting_first_video", "ready_for_evaluation", "repair_uploaded", "awaiting_repair_upload", "generating_video", "generated_video_ready", "stopped_budget_exhausted"}
-                if self.state.status not in allowed:
-                    return self._json(HTTPStatus.BAD_REQUEST, {"error": "Autopilot can start only while a plan or an unfinished version is available"})
+                if self.state.status=='awaiting_skill_clarification':self.state.status='skill_preparation_required'
+                self.state.creative_spec.enriched_context['autonomous']=True
                 if self.state.status=='awaiting_context_confirmation':
                     self._infer_autonomous_context()
                 if self.state.status == "planning_ready":
@@ -543,7 +543,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     import re
                     original=self.state;spec=original.creative_spec;context=spec.enriched_context
                     turn=getattr(self,'chat_decision',{})
-                    retry=turn.get('intent') in {'retry','confirm_generation'} if turn else bool(re.fullmatch(r'(?:重试|继续|重新处理|重新规划|retry|continue)[。！!,.\s]*',instruction,re.I))
+                    retry=turn.get('intent') in {'retry','plan','confirm_generation'} if turn else bool(re.fullmatch(r'(?:重试|继续|重新处理|重新规划|retry|continue)[。！!,.\s]*',instruction,re.I))
                     if original.status=='awaiting_skill_clarification' and retry:return self._json(200,present(self.state))
                     is_answer=turn.get('intent')=='answer' if turn else original.status=='awaiting_skill_clarification'
                     prompt=spec.source_prompt if retry or is_answer else spec.source_prompt+'\n\nAdditional user direction: '+instruction
@@ -555,13 +555,16 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     self.state=create_enriched_project_state(prompt,characters.source_reference(spec),CONTROL_PLANNER,CONTEXT_AGENT,
                         multimodal_assets=characters.source_assets(spec),ui_language=payload.get('language',context.get('ui_language','zh')),
                         uploaded_skills=context.get('uploaded_skills',[]),skill_checkpoint=context.get('skill_execution') if retry else None,
-                        prepared_basis=context.get('skill_brief') if retry else None,creative_answers=answers,resolved_requirements=requirements)
+                        prepared_basis=context.get('skill_brief') if retry else None,creative_answers=answers,resolved_requirements=requirements,
+                        autonomous=original.execution_mode=='autopilot' and not original.autopilot_paused)
                     self.state.project_id=original.project_id;self.state.project_name=original.project_name
+                    self.state.execution_mode=original.execution_mode;self.state.autopilot_paused=original.autopilot_paused
                     for field in ('current_version_id','current_video_asset','version_reviews','generation_jobs','evaluation_history','iterations_used'):
                         setattr(self.state,field,getattr(original,field))
                     self.state.history=[*original.history,*self.state.history]
-                    if self.state.status=='planning_ready' and requirements.get('generation_requested'):
+                    if self.state.status=='planning_ready' and (requirements.get('generation_requested') or (self.state.execution_mode=='autopilot' and not self.state.autopilot_paused)):
                         self.state.status='awaiting_first_video';self.chat_action='generate'
+                    elif self.state.status in PREPARATION_STATES and self.state.execution_mode=='autopilot':self.state.autopilot_paused=True
                     record_exchange(self.state,instruction,original)
                     if path=='/api/retry-planning':self.state.conversation.pop(-2)
                     return self._json(200,present(self.state))
@@ -575,7 +578,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                         (str(item.get("value", "")) for item in original.creative_spec.enriched_context.get("facts", []) if item.get("key") == "target_market"),
                         "",
                     )
-                    revised_prompt = f"{original.creative_spec.source_prompt}\n\nAdditional user direction: {instruction}"
+                    revised_prompt = original.creative_spec.source_prompt if getattr(self,'chat_decision',{}).get('intent')=='plan' else f"{original.creative_spec.source_prompt}\n\nAdditional user direction: {instruction}"
                     validate_brief_duration(revised_prompt)
                     self.state = create_enriched_project_state(
                         revised_prompt,
@@ -932,7 +935,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
             {'brief':original.creative_spec.source_prompt},500,timeout=60)
         market=str(result.get('target_market','')).strip()
         if not market:raise ValueError('自主规划暂未确定目标地区，请重试。')
-        self.state=create_enriched_project_state(original.creative_spec.source_prompt,characters.source_reference(original.creative_spec),CONTROL_PLANNER,CONTEXT_AGENT,market,characters.source_assets(original.creative_spec),ui_language=original.creative_spec.enriched_context.get('ui_language','zh'),uploaded_skills=original.creative_spec.enriched_context.get('uploaded_skills',[]))
+        self.state=create_enriched_project_state(original.creative_spec.source_prompt,characters.source_reference(original.creative_spec),CONTROL_PLANNER,CONTEXT_AGENT,market,characters.source_assets(original.creative_spec),ui_language=original.creative_spec.enriched_context.get('ui_language','zh'),uploaded_skills=original.creative_spec.enriched_context.get('uploaded_skills',[]),creative_answers=original.creative_spec.enriched_context.get('creative_answers',[]),resolved_requirements=original.creative_spec.enriched_context.get('resolved_requirements',{}),autonomous=True)
         self.state.project_id=original.project_id;self.state.project_name=original.project_name
         self.state.conversation=original.conversation
         self.state.execution_mode='autopilot';self.state.autopilot_paused=False

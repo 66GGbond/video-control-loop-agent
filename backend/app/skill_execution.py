@@ -12,6 +12,7 @@ PREPARATION_STATES={'skill_preparation_required','skill_preparation_failed','pla
 def clarify_failure(state):
     """Ask one creative tradeoff only when the audit found conflicting inputs."""
     context=state.creative_spec.enriched_context;failure=context.get('skill_execution',{})
+    if context.get('autonomous'):return False
     missing=(failure.get('audit') or {}).get('missing',[])
     if not missing or not os.getenv('ARK_API_KEY'):return False
     result=request_json(os.environ['ARK_API_KEY'],configured_model(),
@@ -79,6 +80,7 @@ def inputs(state,repair=None):
             'output':spec.generation_spec,'references':spec.asset_manifest,'repair':getattr(repair,'prompt',''),
             'creative_answers':spec.enriched_context.get('creative_answers',[]),
             'resolved_requirements':spec.enriched_context.get('resolved_requirements',{}),
+            'autonomous':spec.enriched_context.get('autonomous',False),
             'source_references':reference_inputs(source_assets(spec)),
             'skill_brief':spec.enriched_context.get('skill_brief')}
 
@@ -110,6 +112,7 @@ Seedance formatting: organize subject/action/scene/style/camera/sound, bind real
     try:
         if not key:raise ValueError('执行上传的 Skill 需要配置决策模型。')
         system+='\nWhen phase is brief, no creative plan exists yet: first execute all applicable Skill steps against the entire original brief and references, resolve conflicts in favor of explicit user choices, and produce the complete enriched creative basis that the planner will consume. When phase is video, preserve the previously verified skill_brief work and adapt it to the current approved shots, settings and character references; do not independently invent a different creative plan.'
+        if payload['autonomous']:system+='\nAutonomous mode: make unspecified creative choices yourself; ask no questions. Honor explicit user requirements and accepted decisions. If technically infeasible, report the constraint rather than inventing unsupported tools or silently dropping mandatory content.'
         translation=bool(re.search(r'(?:对白|对话|台词|dialogue)[^\n。]{0,24}(?:英语|英文|English)',spec.source_prompt,re.I))
         condense=spec.enriched_context.get('resolved_requirements',{}).get('dialogue_edit_policy')=='condense_preserve_meaning'
         payload['dialogue_policy']='Translate all quoted dialogue to English with complete source/text mapping; the explicit user language overrides Skill verbatim defaults.' if translation else 'Preserve quoted dialogue verbatim.'

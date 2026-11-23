@@ -8,6 +8,13 @@ from tests import test_local_server as local
 
 
 class ChatTurnTests(unittest.TestCase):
+    def test_repeated_accepted_settings_do_not_reject_retry_or_planning(self):
+        state=create_demo_state('需求');state.creative_spec.enriched_context['resolved_requirements']={'dialogue_edit_policy':'condense_preserve_meaning','character_reference_policy':'skip'}
+        for intent,text in [('retry','继续'),('plan','开始生成创意规划'),('discuss','为什么这样安排')]:
+            result={'intent':intent,'summary':'沿用已有设置','evidence':text,'question_id':'','dialogue_edit_policy':'condense_preserve_meaning','character_reference_policy':'skip','reply':'已有决定仍保留。'}
+            with patch.dict(os.environ,{'ARK_API_KEY':'offline'}),patch('backend.app.chat_turns.request_json',return_value=result):
+                decision=decide(state,text)
+            self.assertIsNone(decision['dialogue_edit_policy']);self.assertIsNone(decision['character_reference_policy'])
     def test_rejected_combined_command_is_recovered_without_media_execution(self):
         state=create_demo_state('原始剧本');state.status='skill_preparation_failed'
         text='跳过人物三视图，直接生成视频'
@@ -74,6 +81,29 @@ class ChatTurnHTTPTests(unittest.TestCase):
     cleanup=local.LocalServerTests.cleanup
     request=local.LocalServerTests.request
     session=local.LocalServerTests.session
+
+    def test_autopilot_can_be_enabled_and_paused_in_preparation_and_terminal_states(self):
+        visitor=self.session()
+        for stage in ['ready_for_brief','skill_preparation_required','skill_preparation_failed','planning_failed','awaiting_skill_clarification','published']:
+            state=create_demo_state('已有需求');state.status=stage;self.store.save(visitor,state)
+            with patch.object(local.server,'create_enriched_project_state') as planning,patch.object(local.server.VIDEO_GENERATOR,'submit') as video:
+                status,data=self.request('/api/autopilot',{'action':'start'})
+                self.assertEqual(status,200,data);planning.assert_not_called();video.assert_not_called()
+                self.assertEqual(data['execution_mode'],'autopilot');self.assertFalse(data['autopilot_paused'])
+                status,paused=self.request('/api/autopilot',{'action':'pause'})
+                self.assertEqual(status,200,paused);self.assertTrue(paused['autopilot_paused'])
+
+    def test_autopilot_preparation_preserves_mode_and_pauses_after_failure(self):
+        visitor=self.session()
+        for outcome in ['planning_ready','skill_preparation_failed']:
+            state=create_demo_state('完整需求');state.status='skill_preparation_failed';state.execution_mode='autopilot';self.store.save(visitor,state)
+            result=create_demo_state('完整需求');result.status=outcome
+            with patch.object(local.server,'create_enriched_project_state',return_value=result) as planning:
+                status,data=self.request('/api/retry-planning',{})
+            self.assertEqual(status,200,data);self.assertTrue(planning.call_args.kwargs['autonomous'])
+            self.assertEqual(data['execution_mode'],'autopilot')
+            self.assertEqual(data['autopilot_paused'],outcome=='skill_preparation_failed')
+            if outcome=='planning_ready':self.assertEqual(data['status'],'awaiting_first_video')
 
     def test_combined_confirmation_skips_images_and_waits_for_valid_planning(self):
         visitor=self.session();state=create_demo_state('英语剧本');state.status='skill_preparation_failed'

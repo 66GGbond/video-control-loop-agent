@@ -872,10 +872,9 @@ function renderCreativeAgent(state, spec, enrichedContext) {
   submit.textContent = isInitialBrief ? "Generate control plan" : "Send update";
   const budgetControl = document.querySelector("#repair-budget-control");
   budgetControl.hidden = !hasPlan;
-  if (hasPlan || isInitialBrief || state.status==="awaiting_context_confirmation") {
+  {
     const autopilot = state.execution_mode === "autopilot";
     const paused = Boolean(state.autopilot_paused);
-    const supported = new Set(["ready_for_brief", "awaiting_context_confirmation", "planning_ready", "awaiting_first_video", "ready_for_evaluation", "repair_uploaded", "awaiting_repair_upload", "generating_video", "generated_video_ready"]);
     const button = document.querySelector("#autopilot-toggle");
     button.hidden = false;
     button.innerHTML='<svg class="ui-icon" aria-hidden="true"><use href="#i-agent"/></svg>';
@@ -883,9 +882,7 @@ function renderCreativeAgent(state, spec, enrichedContext) {
     const tooltip = I18n.text(autopilot&&!paused ? '暂停 Agent 自主代理' : '开启 Agent 自主代理');
     button.dataset.tooltip = tooltip;
     button.setAttribute("aria-label", tooltip);
-    button.disabled = !autopilot && !supported.has(state.status);
-  } else {
-    document.querySelector("#autopilot-toggle").hidden = true;
+    button.disabled = false;
   }
 }
 
@@ -1728,10 +1725,14 @@ function autopilotIsRunning(state) {
 async function advanceAutopilot(state) {
   if(location.hash==='#history'||document.body.dataset.workspace==='history')return;
   if (!autopilotIsRunning(state) || autopilotAdvancePending) return;
-  if (!["awaiting_first_video", "awaiting_repair_upload", "ready_for_evaluation", "repair_uploaded"].includes(state.status)) return;
+  const preparation=['skill_preparation_required','skill_preparation_failed','planning_failed','awaiting_skill_clarification'];
+  if (![...preparation,"awaiting_first_video", "awaiting_repair_upload", "ready_for_evaluation", "repair_uploaded"].includes(state.status)) return;
   autopilotAdvancePending = true;
   try {
-    if (["awaiting_first_video", "awaiting_repair_upload"].includes(state.status)) {
+    if(preparation.includes(state.status)){
+      const prepared=await endpoint('/api/retry-planning',{method:'POST',body:'{}'});render(prepared);
+      if(autopilotIsRunning(prepared)&&prepared.status==='awaiting_first_video')await generateVideo();
+    } else if (["awaiting_first_video", "awaiting_repair_upload"].includes(state.status)) {
       await generateVideo();
     } else {
       await runQualityLoop();

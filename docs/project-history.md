@@ -61,3 +61,7 @@ The composer sends every turn to /api/chat. A model reads the original brief, re
 ## Main Agent identity and compound instructions
 
 The controller and planner use the configured ARK_MODEL (currently doubao-seed-2-1-pro-260915). State responses expose agent_runtime model IDs for inspection. A generation confirmation may carry production choices and previously accepted dialogue policy; these are not mutually exclusive. Explicitly skipping character references sets character_reference_policy=skip, bypasses character planning/image calls and retains the choice across planning retries. Generation still waits for a valid creative plan. Main-Agent request, JSON and action-validation failures are reported as system failures, not language-understanding failures, and retain diagnostics.
+
+## Persistent autonomous-mode switch
+
+The four-point Agent switch above the composer stays visible and operable in brief, planning failure, pending clarification and completed states. Starting autonomy from a preparation state delegates missing creative decisions to the Agent and resumes preparation; successful replanning preserves autonomous mode and continues production. Technical preparation failure pauses instead of repeatedly retrying. Existing accepted policy values echoed by the model are normalized as no-ops for every intent, while genuine new changes still require a suitable action. The plan intent reuses the original brief and accepted decisions rather than appending a planning command to the script.

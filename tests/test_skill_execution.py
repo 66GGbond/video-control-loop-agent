@@ -8,6 +8,11 @@ from backend.app.agent.model_catalog import SEEDANCE_25
 from backend.app.agent.prompt_compiler import PromptCompiler
 
 class SkillExecutionTests(unittest.TestCase):
+    def test_autonomous_preparation_does_not_ask_a_user_to_resolve_creative_choices(self):
+        context=self.state.creative_spec.enriched_context
+        context['autonomous']=True;context['skill_execution']={'audit':{'missing':['需要自行选择对白优先级']}}
+        with patch('backend.app.skill_execution.request_json') as model:
+            self.assertFalse(clarify_failure(self.state));model.assert_not_called()
     def test_explicit_permission_to_condense_overrides_literal_dialogue_check(self):
         self.state.creative_spec.enriched_context['resolved_requirements']={'dialogue_edit_policy':'condense_preserve_meaning'}
         result={**self.result,'dialogue_map':[{'source':'我在这里。','text':'我在。'},{'source':'不要离开。','text':'别走。'}],'optimized_prompt':'凯瑟琳说{我在。}；希斯克利夫说{别走。}。'}
