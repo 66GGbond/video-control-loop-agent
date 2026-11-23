@@ -148,6 +148,26 @@ class CharacterReferencesTests(unittest.TestCase):
         with self.assertRaises(ValueError):chars.start(self.state,self.store,self.visitor,plan['id'],PRO)
         with self.assertRaises(ValueError):chars.ensure_ready(self.state)
 
+    def test_only_one_question_is_sent_until_user_answers(self):
+        value={**self.people,'questions':['哪个风格？','马是什么颜色？'],'shared_style':{}}
+        with patch('backend.app.character_references.request_json',return_value=value):
+            chars.assess(self.state)
+        questions=[m for m in self.state.conversation if m.get('kind')=='creative_clarification']
+        self.assertEqual(len(questions),1)
+        chars.ask(self.state,['另一个问题？'])
+        self.assertEqual(len(self.state.conversation),1)
+
+    def test_autonomous_mode_resolves_pending_style_without_questions(self):
+        self.state.execution_mode='autopilot';self.state.autopilot_paused=False
+        self.state.creative_spec.character_reference_plan={'status':'awaiting_clarification'}
+        value={**self.people,'questions':['哪个风格？'],'shared_style':{'description':'电影级写实西部风格','explicit':False,'confidence':.4}}
+        with patch('backend.app.character_references.request_json',return_value=value):
+            plan=chars.assess(self.state)
+        self.assertEqual(plan['status'],'planned');self.assertEqual(plan['questions'],[])
+        self.assertFalse(self.state.autopilot_paused)
+        self.assertEqual(self.state.conversation,[])
+        self.assertEqual(self.state.creative_spec.production_direction['character_visual_style'],'电影级写实西部风格')
+
     def test_dialogue_answer_locks_one_style_for_all_three_view_prompts(self):
         with patch('backend.app.character_references.request_json',return_value={**self.people,'shared_style':{}}):
             chars.assess(self.state)
@@ -177,6 +197,19 @@ class CharacterDialogueHTTPTests(unittest.TestCase):
     cleanup=_helpers.cleanup
     request=_helpers.request
     session=_helpers.session
+
+    def test_chat_confirmation_persists_message_without_paid_call(self):
+        from tests import test_local_server as local
+        visitor=self.session();state=create_demo_state('电影级西部故事');state.status='planning_ready'
+        state.creative_spec.character_reference_plan={'status':'skipped','required':False}
+        self.store.save(visitor,state)
+        with patch.object(local.server.VIDEO_GENERATOR,'submit') as paid:
+            status,data=self.request('/api/confirm-generation',{'message':'确认生成第一个视频'})
+            self.assertEqual(status,200,data);paid.assert_not_called()
+        self.assertEqual(data['status'],'awaiting_first_video')
+        self.assertEqual(data['conversation'][-2]['text'],'确认生成第一个视频')
+        state.creative_spec.character_reference_plan={'status':'awaiting_clarification'};self.store.save(visitor,state)
+        self.assertEqual(self.request('/api/confirm-generation',{'message':'确认'})[0],400)
 
     def test_answer_updates_main_plan_and_character_style_without_paid_generation(self):
         from backend.app import server

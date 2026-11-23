@@ -10,7 +10,7 @@ function renderCharacterReferences(state) {
   if(!plan.id&&!active){section.hidden=true;return;}
   document.querySelector('#character-reference-title').textContent=I18n.text(plan.schema_version!==2&&['ready','generated','generating','failed','uncertain'].includes(plan.status)?'Character references (legacy)':'Character three views');
   const waiting=plan.status==='awaiting_clarification';
-  document.querySelector('#character-style-dialogue').hidden=!waiting;
+  document.querySelector('#character-style-dialogue').hidden=true;
   if(waiting&&lastCreativeQuestion!==plan.id&&document.body.dataset.workspace!=='history'){lastCreativeQuestion=plan.id;setCreativeAgentOpen(true);}
   const select=document.querySelector('#character-image-model'),before=select.value;
   select.replaceChildren(...(plan.model_choice?.candidates||[]).filter(c=>c.configured).map(c=>{const o=document.createElement('option');o.value=c.model_id;o.textContent=c.name;return o;}));
@@ -21,7 +21,7 @@ function renderCharacterReferences(state) {
   generate.hidden=!plan.required||plan.status!=='planned';generate.disabled=!active||!select.value||Boolean(characterPlanningPending);
   const retry=document.querySelector('#plan-character-references');retry.textContent=I18n.text(plan.status==='generated'?'Prepare video references':'Retry character planning');retry.hidden=(plan.status==='generated'? !characterError : Boolean(waiting||plan.status==='skipped'||plan.model_choice||characterPlanningPending))||!active;
   const statuses={awaiting_clarification:'Confirm the visual style in the Creative Agent conversation',planned:'Important characters selected',generating:'Generating character references…',generated:'Preparing video references…',ready:'Character references attached to video',skipped:'No character references needed',failed:'Character generation failed. Check the Ark console before starting a new plan.',uncertain:'Character generation is unconfirmed. Check the Ark console; it will not retry automatically.'};
-  document.querySelector('#character-reference-status').textContent=characterError||I18n.text(statuses[plan.status]||'Planning character references…');
+  document.querySelector('#character-reference-status').textContent=waiting?'':characterError||I18n.text(statuses[plan.status]||'Planning character references…');
   if(!characterError&&plan.schema_version===2&&['planned','ready'].includes(plan.status)&&plan.shared_style?.description)document.querySelector('#character-reference-status').textContent=I18n.text('Shared style')+' · '+plan.shared_style.description;
   const grid=document.querySelector('#character-reference-grid');grid.replaceChildren();
   for(const person of plan.characters||[]) {
@@ -32,6 +32,7 @@ function renderCharacterReferences(state) {
     if(person.status&&person.status!=='succeeded'){const status=document.createElement('small');status.textContent=I18n.text({running:'Generating…',failed:'Failed',uncertain:'Unconfirmed'}[person.status]||'Waiting');card.append(status);}
     grid.append(card);
   }
+  if(plan.status==='ready'&&(state.status==='awaiting_first_video'||(autopilotIsRunning(state)&&state.status==='awaiting_repair_upload')))setTimeout(()=>generateVideo(null,true),0);
   if(plan.status==='generated'&&!characterAttachPending&&!characterError)setTimeout(()=>attachCharacterReferences().catch(()=>{}),0);
   if(plan.status==='generating'&&!characterPollTimer)characterPollTimer=setTimeout(pollCharacterReferences,2500);
 }

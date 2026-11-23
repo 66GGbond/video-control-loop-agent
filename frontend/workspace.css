@@ -174,3 +174,13 @@ body[data-workspace=history] #creative-agent,body[data-workspace=history] #creat
 .project-current-check {margin-left:auto;color:#b69bdc;}
 .project-switch-empty {margin:10px;padding:10px;color:var(--muted);font-size:12px;}
 @container vcl (max-width:650px){.project-toolbar{padding:6px 0 15px}.project-toolbar-actions{width:auto;flex-wrap:wrap}.project-switch-panel{left:0;right:auto}}
+/* Conversation has a single composer; operational controls stay out of the feed. */
+#creative-agent #agent-video-action,#creative-agent #context-confirmation,#character-style-dialogue {display:none!important}
+#creative-agent #create-plan {display:none!important}
+.creative-agent-composer>label {display:none}
+.creative-agent-composer .composer-action-row {justify-content:flex-end;margin-top:8px}
+#autopilot-toggle {width:34px;height:34px;min-height:34px;padding:7px;border-radius:9px;background:transparent;border:1px solid #b49bff30;color:#ac98c9}
+#autopilot-toggle .ui-icon {width:20px;height:20px}
+#autopilot-toggle[aria-pressed=true] {background:#9d74ff22;color:#d9c5ff;border-color:#a57aff70}
+.creative-agent-composer .creative-prompt-editor {min-height:70px;max-height:170px}
+.character-stage-actions button {display:none!important}

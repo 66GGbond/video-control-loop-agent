@@ -1,5 +1,14 @@
 // Interface copy only. User briefs and model prose are not machine-translated.
 window.I18N_CATALOG = [
+ ["Enable Agent autonomous mode","开启 Agent 自主代理"], ["Pause Agent autonomous mode","暂停 Agent 自主代理"],
+ ["The video is generating and will appear in the workspace.","视频正在生成，完成后会在主界面展示。"],
+ ["The video is ready. Shall I check its quality?","视频已生成，是否开始质检？"],
+ ["The repaired version is ready. Shall I check its quality?","修复版本已就绪，是否开始质检？"],
+ ["The repair plan is ready. Shall I generate the repaired version?","修复方案已整理好，是否生成修复版本？"],
+ ["Checking video quality.","正在检查视频质量。"],
+ ["The plan is ready. Shall I generate the first video?","当前方案已基本确定，是否开始生成第一个视频？"],
+ ["Message the Agent · Enter to send, Shift+Enter for a new line","发送消息 · 回车发送，Shift+回车换行"],
+ ["Starting production. I will prepare any character references, then generate the video.","开始制作。我会先准备所需的人物参考图，再生成视频。"],
  ["Search projects","搜索项目"], ["No matching projects","没有匹配的项目"],
  ["Project toolbar","项目工具栏"], ["Current project","当前项目"], ["Choose project","选择项目"], ["Untitled project","未命名项目"],
  ["All projects","全部项目"], ["Canvas projects","画布项目"],

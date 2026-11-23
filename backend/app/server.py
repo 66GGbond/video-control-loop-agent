@@ -322,6 +322,11 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     multimodal_assets=assets,
                     ui_language=payload.get("language", "zh"),
                 )
+                if previous.execution_mode=='autopilot' and not previous.autopilot_paused:
+                    self.state.execution_mode='autopilot';self.state.autopilot_paused=False
+                    if self.state.status=='awaiting_context_confirmation':
+                        self._infer_autonomous_context()
+                    if self.state.status=='planning_ready':self.state.status='awaiting_first_video'
                 if previous.status == 'ready_for_brief':
                     self.state.project_id = previous.project_id
                     self.state.project_name = previous.project_name
@@ -353,6 +358,21 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     "payload": {"message": "User provided the target market required for seasonal context."},
                 })
                 return self._json(HTTPStatus.OK, present(self.state))
+            if path == '/api/confirm-generation':
+                payload=self._read_json()
+                text=str(payload.get('message','')).strip()
+                if payload.get('action')=='quality' and text and self.state.status in {'ready_for_evaluation','repair_uploaded'}:
+                    self.state.conversation.extend([{'id':uuid.uuid4().hex,'role':'user','text':text},{'id':uuid.uuid4().hex,'role':'assistant','kind':'quality_started','text':'正在检查视频质量。'}])
+                    return self._json(200,present(self.state))
+                if not text or self.state.status not in {'planning_ready','awaiting_first_video','awaiting_repair_upload'}:
+                    return self._json(400,{'error':'当前没有可开始生成的方案。'})
+                if self.state.creative_spec.character_reference_plan.get('status')=='awaiting_clarification':
+                    return self._json(400,{'error':'请先回答当前对话中的问题。'})
+                from datetime import datetime,timezone
+                self.state.conversation.extend([{'id':uuid.uuid4().hex,'role':'user','text':text},
+                    {'id':uuid.uuid4().hex,'role':'assistant','kind':'generation_started','text':'开始制作。我会先准备所需的人物参考图，再生成视频。'}])
+                if self.state.status=='planning_ready':self.state.status='awaiting_first_video'
+                return self._json(200,present(self.state))
             if path == "/api/approve-plan":
                 if self.state.status != "planning_ready":
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "Create a control plan before approving it"})
@@ -377,13 +397,17 @@ class DemoHandler(SimpleHTTPRequestHandler):
                         "payload": {"message": "User requested a pause after the current provider action completes."},
                     })
                     return self._json(HTTPStatus.OK, present(self.state))
-                allowed = {"planning_ready", "awaiting_first_video", "ready_for_evaluation", "repair_uploaded", "awaiting_repair_upload", "generating_video", "generated_video_ready", "stopped_budget_exhausted"}
+                allowed = {"ready_for_brief", "awaiting_context_confirmation", "planning_ready", "awaiting_first_video", "ready_for_evaluation", "repair_uploaded", "awaiting_repair_upload", "generating_video", "generated_video_ready", "stopped_budget_exhausted"}
                 if self.state.status not in allowed:
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "Autopilot can start only while a plan or an unfinished version is available"})
+                if self.state.status=='awaiting_context_confirmation':
+                    self._infer_autonomous_context()
                 if self.state.status == "planning_ready":
                     self.state.status = "awaiting_first_video"
                 self.state.execution_mode = "autopilot"
                 self.state.autopilot_paused = False
+                if self.state.creative_spec.character_reference_plan.get('status')=='awaiting_clarification':
+                    characters.prepare(self.state,SESSIONS,self.visitor_id)
                 self.state.history.append({
                     "at": "local-demo",
                     "phase": "human_approval",
@@ -751,6 +775,18 @@ class DemoHandler(SimpleHTTPRequestHandler):
     def log_message(self, format, *args):
         # Keep terminal output compact for a live demo.
         return
+
+    def _infer_autonomous_context(self):
+        original=self.state
+        result=characters.request_json(os.environ['ARK_API_KEY'],characters.configured_model(),
+            'Choose the best target country or region for this video brief autonomously. Return JSON {"target_market":"country or region"}. Do not ask the user.',
+            {'brief':original.creative_spec.source_prompt},500,timeout=60)
+        market=str(result.get('target_market','')).strip()
+        if not market:raise ValueError('自主规划暂未确定目标地区，请重试。')
+        self.state=create_enriched_project_state(original.creative_spec.source_prompt,characters.source_reference(original.creative_spec),CONTROL_PLANNER,CONTEXT_AGENT,market,characters.source_assets(original.creative_spec),ui_language=original.creative_spec.enriched_context.get('ui_language','zh'))
+        self.state.project_id=original.project_id;self.state.project_name=original.project_name
+        self.state.conversation=original.conversation
+        self.state.execution_mode='autopilot';self.state.autopilot_paused=False
 
     def _json(self, status: HTTPStatus, data: dict):
         if hasattr(self, "visitor_id"):

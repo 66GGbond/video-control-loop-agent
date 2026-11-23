@@ -802,20 +802,26 @@ function renderExecutionTrace(state) {
 let renderedConversation = "";
 function renderConversation(state) {
   const log=document.querySelector("#agent-conversation"), feed=document.querySelector("#creative-agent-feed");
-  const messages=state.conversation || [], signature=I18n.language+JSON.stringify(messages);
+  const messages=state.conversation || [], signature=I18n.language+state.status+state.execution_mode+state.autopilot_paused+JSON.stringify(messages);
   if(signature===renderedConversation)return;
   const follow=feed.scrollHeight-feed.scrollTop-feed.clientHeight<48, scroll=feed.scrollTop;
   const first=renderedConversation==="";
   renderedConversation=signature;
   log.replaceChildren();
   for(const message of messages) {
-    if(state.status==="awaiting_context_confirmation"&&message===messages.at(-1)&&message.kind==="context_question")continue;
+    if(['plan_ready','plan_updated'].includes(message.kind))continue;
+    if(message.kind==='creative_clarification'){
+      const index=messages.indexOf(message),previousUser=messages.slice(0,index).findLastIndex(m=>m.role==='user');
+      if(messages.slice(previousUser+1,index).some(m=>m.kind==='creative_clarification'))continue;
+    }
     const article=document.createElement("article"),text=document.createElement("p");
     article.className="agent-message agent-message-"+(message.role==="user"?"user":"system");
     text.setAttribute("translate","no");text.textContent=message.role==="assistant"&&message.kind?I18n.text(message.text):message.text;
     article.append(text);log.append(article);
   }
-  log.hidden=!messages.length;
+  const progress={generating_video:'视频正在生成，完成后会在主界面展示。',ready_for_evaluation:'视频已生成，是否开始质检？',repair_uploaded:'修复版本已就绪，是否开始质检？',awaiting_repair_upload:'修复方案已整理好，是否生成修复版本？'}[state.status];
+  if(progress&&!autopilotIsRunning(state)){const item=document.createElement('article');item.className='agent-message agent-message-system';const text=document.createElement('p');text.textContent=I18n.text(progress);item.append(text);log.append(item);}
+  log.hidden=!messages.length&&!progress;
   requestAnimationFrame(()=>{feed.scrollTop=follow||first?feed.scrollHeight:scroll;});
 }
 
@@ -835,7 +841,7 @@ function renderCreativeAgent(state, spec, enrichedContext) {
   const hasBrief = Boolean(prompt);
   const hasPlan = Boolean(spec.shots?.length);
   const question = document.querySelector("#context-confirmation");
-  question.hidden = state.status !== "awaiting_context_confirmation";
+  question.hidden = true;
   document.querySelector("#context-question-detail").textContent = "Which country or region is this video for?";
   document.querySelector("#agent-intro").parentElement.hidden = hasBrief || Boolean(state.conversation?.length);
   const isInitialBrief = state.status === "ready_for_brief";
@@ -849,21 +855,20 @@ function renderCreativeAgent(state, spec, enrichedContext) {
     : state.status === "awaiting_context_confirmation"
       ? "Add a constraint or clarification while you answer the required question above."
       : "Add a constraint or request a revision for the next eligible version.";
-  if(spec.character_reference_plan?.status==='awaiting_clarification')composer.dataset.placeholder=I18n.text("Tell the Agent your preferred visual style or clarify its question.");
+  composer.dataset.placeholder=I18n.text("Message the Agent · Enter to send, Shift+Enter for a new line");
   attachments.hidden = !isInitialBrief;
   submit.textContent = isInitialBrief ? "Generate control plan" : "Send update";
   const budgetControl = document.querySelector("#repair-budget-control");
   budgetControl.hidden = !hasPlan;
-  if (hasPlan) {
+  if (hasPlan || isInitialBrief || state.status==="awaiting_context_confirmation") {
     const autopilot = state.execution_mode === "autopilot";
     const paused = Boolean(state.autopilot_paused);
-    const supported = new Set(["planning_ready", "awaiting_first_video", "ready_for_evaluation", "repair_uploaded", "awaiting_repair_upload", "generating_video", "generated_video_ready"]);
+    const supported = new Set(["ready_for_brief", "awaiting_context_confirmation", "planning_ready", "awaiting_first_video", "ready_for_evaluation", "repair_uploaded", "awaiting_repair_upload", "generating_video", "generated_video_ready"]);
     const button = document.querySelector("#autopilot-toggle");
     button.hidden = false;
-    button.textContent = autopilot && !paused ? "Ⅱ" : "▶";
-    const tooltip = autopilot
-      ? (paused ? "继续 Agent 自主代理" : "暂停 Agent 自主代理：当前步骤完成后停止下一步")
-      : "Agent 自主代理：在推荐预算内自动生成、评估和修复";
+    button.innerHTML='<svg class="ui-icon" aria-hidden="true"><use href="#i-agent"/></svg>';
+    button.setAttribute("aria-pressed",String(autopilot&&!paused));
+    const tooltip = I18n.text(autopilot&&!paused ? '暂停 Agent 自主代理' : '开启 Agent 自主代理');
     button.dataset.tooltip = tooltip;
     button.setAttribute("aria-label", tooltip);
     button.disabled = !autopilot && !supported.has(state.status);
@@ -1293,7 +1298,7 @@ function render(state) {
   budgetValue.textContent = String(budget);
   budgetControl.title = state.status === "stopped_budget_exhausted"
     ? `修复预算已耗尽：当前为 ${budget} 轮。增加次数即可授权 Agent 继续修复。`
-    : `修复预算：当前最多 ${budget} 轮。调整预算会暂停 Agent 自主代理，等待你点击 ▶ 继续。`;
+    : `修复预算：当前最多 ${budget} 轮。调整预算会暂停 Agent 自主代理，等待你开启 Agent 自主代理继续。`;
   budgetControl.dataset.tooltip = budgetControl.title;
   budgetDecrease.disabled = !canAdjustBudget || budget <= state.iterations_used;
   budgetIncrease.disabled = !canAdjustBudget || budget >= 5;
@@ -1464,6 +1469,7 @@ document.querySelector("#creative-prompt").addEventListener("input", () => {
 });
 document.querySelector("#creative-prompt").addEventListener("keyup", updateMentionMenu);
 document.querySelector("#creative-prompt").addEventListener("keydown", event => {
+  if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();if(!document.querySelector('#create-plan').disabled)document.querySelector('#project-form').requestSubmit();return;}
   if (event.key === "Backspace" || event.key === "Delete") {
     const token = adjacentMentionToken(event.key === "Backspace" ? "backward" : "forward");
     if (token) {
@@ -1512,11 +1518,20 @@ document.querySelector("#project-form").addEventListener("submit", async event =
         return asset;
       }));
       render(await endpoint("/api/create-project", { method: "POST", body: JSON.stringify({ prompt, multimodal_assets: multimodalAssets, language:I18n.language }) }));
+    } else if(renderedState.status==='awaiting_context_confirmation'){
+      render(await endpoint('/api/confirm-context',{method:'POST',body:JSON.stringify({target_market:prompt,language:I18n.language})}));
+    } else if(['ready_for_evaluation','repair_uploaded'].includes(renderedState.status)&&/^(确认|可以|好的|好|是|开始|开始质检|运行质检|质检|yes)[。！!,.\s]*$/i.test(prompt)){
+      render(await endpoint('/api/confirm-generation',{method:'POST',body:JSON.stringify({message:prompt,action:'quality'})}));
+      await runQualityLoop();
+    } else if(renderedState.creative_spec.character_reference_plan?.status!=='awaiting_clarification'&&/^(确认|确认生成|确认生成视频|确认生成第一个视频|开始|开始生成|开始生成视频|生成视频|生成第一个视频|可以|好的|好|是|yes|generate|start)[。！!,.\s]*$/i.test(prompt)){
+      render(await endpoint('/api/confirm-generation',{method:'POST',body:JSON.stringify({message:prompt})}));
+      await generateVideo(null,true);
     } else {
       render(await endpoint("/api/revise-brief", { method: "POST", body: JSON.stringify({ instruction: prompt, language:I18n.language }) }));
     }
     setEditorText("");
     clearReferenceAttachments();
+    if(autopilotIsRunning(renderedState))await advanceAutopilot(renderedState);
     if (["planning_ready", "awaiting_first_video", "awaiting_repair_upload"].includes(renderedState.status)) await recommendCurrentVideoModel();
   } catch (error) {
     I18n.alert(error.message);
@@ -1641,7 +1656,9 @@ async function pollGeneration() {
     I18n.alert(error.message);
   }
 }
-async function generateVideo(event) {
+let videoStartPending=false;
+async function generateVideo(event, authorized=false) {
+  if(videoStartPending)return;videoStartPending=true;
   const button = event?.currentTarget || document.querySelector("#generate-video");
   button.disabled = true;
   try {
@@ -1653,12 +1670,12 @@ async function generateVideo(event) {
       setCreativeAgentOpen(true,true);button.disabled=false;return;
     }
     if (characters?.required && (characters.status !== 'ready' || !characters.attached)) {
-      if (autopilotIsRunning(renderedState)) render(await endpoint('/api/autopilot', {method:'POST',body:JSON.stringify({action:'pause'})}));
-      location.hash = 'vcl';
-      window.setTimeout(()=>document.querySelector('#character-references').scrollIntoView({behavior:'smooth',block:'center'}),0);
-      button.disabled = false;
-      return;
+      if((authorized||autopilotIsRunning(renderedState))&&characters.status==='planned'){
+        render(await endpoint('/api/generate-character-references',{method:'POST',body:JSON.stringify({plan_id:characters.id,model_id:characters.selected_model||characters.model_choice?.recommended_model})}));
+      }
+      button.disabled=false;return;
     }
+    await recommendCurrentVideoModel();
     await saveGenerationSettings();
     await approveCurrentPlan();
     const state = await endpoint("/api/generate-video", { method: "POST" });
@@ -1667,7 +1684,7 @@ async function generateVideo(event) {
   } catch (error) {
     button.disabled = false;
     I18n.alert(error.message);
-  }
+  } finally {videoStartPending=false;}
 }
 function autopilotIsRunning(state) {
   return state?.execution_mode === "autopilot" && !state.autopilot_paused;

@@ -50,6 +50,9 @@ def assess(state):
     spec = state.creative_spec
     if state.status not in EDITABLE or not spec.shots:
         raise ValueError('请先生成脚本，再规划人物参考。')
+    autonomous = state.execution_mode == 'autopilot' and not state.autopilot_paused
+    if autonomous and spec.character_reference_plan.get('status')=='awaiting_clarification':
+        spec.character_reference_plan={}
     if spec.character_reference_plan:
         old=spec.character_reference_plan
         if old.get('schema_version')==2 or old.get('status') not in {'planned'}:
@@ -58,7 +61,7 @@ def assess(state):
     if not os.getenv('ARK_API_KEY'):
         raise ValueError('人物参考规划需要配置决策模型。')
     language = 'English' if spec.enriched_context.get('ui_language') == 'en' else 'Simplified Chinese'
-    decision = request_json(os.environ['ARK_API_KEY'], configured_model(), SKILL.read_text() + '\nInterface language: ' + language,
+    decision = request_json(os.environ['ARK_API_KEY'], configured_model(), SKILL.read_text() + '\nInterface language: ' + language + ('\nAutonomous mode: make all creative decisions yourself. Infer one coherent visual style from the brief and storyboard; return a concrete shared_style.description even when not explicit. Do not ask questions.' if autonomous else '\nAsk at most ONE essential question at a time; do not ask about optional details. Never repeat questions already answered in creative_answers.'),
                             {'brief': spec.source_prompt, 'storyboard': spec.shots, 'visual_treatment': spec.production_direction,
                              'creative_answers': spec.enriched_context.get('creative_answers',[]),
                              'planner_questions':spec.enriched_context.get('creative_questions',[]),
@@ -72,6 +75,11 @@ def assess(state):
     style_clear=(style.get('explicit') is True and isinstance(style.get('description'),str) and 0<len(style['description'].strip())<=1500
                  and isinstance(evidence,str) and bool(evidence.strip()) and evidence.strip() in user_text
                  and isinstance(confidence,(int,float)) and not isinstance(confidence,bool) and .85<=confidence<=1)
+    if autonomous:
+        plan['questions']=[]
+        style_clear=bool(style.get('description','').strip())
+        if plan['required'] and not style_clear:
+            raise ValueError('自主规划暂未返回统一画面风格，请重试。')
     if plan['required'] and not style_clear:
         question=('What visual style should this whole video share: photorealistic live action, refined 3D, 2D animation, or another style?'
                   if language=='English' else '这支视频的所有人物统一采用哪种画面风格？例如超写实仿真人、精致 3D、二维动画，或你喜欢的其他风格。')
@@ -80,13 +88,16 @@ def assess(state):
                 status='awaiting_clarification' if plan['questions'] else 'planned' if plan['required'] else 'skipped')
     if plan['questions']:
         state.autopilot_paused=True
-        ask(state,plan['questions'])
+        ask(state,plan['questions'][:1])
     elif plan['required']:
         spec.production_direction['character_visual_style']=style['description'].strip()
         spec.generation_spec['quality_target']='high'
         spec.generation_contract={};spec.evaluation_contract={}
         spec.video_model_selection['confirmed']=False
     spec.character_reference_plan = plan
+    if not autonomous and not plan['questions']:
+        from datetime import datetime, timezone
+        state.conversation.append({'id':uuid.uuid4().hex,'at':datetime.now(timezone.utc).isoformat(),'role':'assistant','kind':'generation_confirmation','text':('The plan is ready. Shall I generate the first video?' if language=='English' else '当前方案已基本确定，是否开始生成第一个视频？')})
     return plan
 
 
@@ -230,7 +241,9 @@ def ensure_ready(state):
 
 def ask(state, questions):
     from datetime import datetime, timezone
-    for question in questions:
+    if state.conversation and state.conversation[-1].get('kind')=='creative_clarification':
+        return
+    for question in questions[:1]:
         state.conversation.append({'id':uuid.uuid4().hex,'at':datetime.now(timezone.utc).isoformat(),'role':'assistant','kind':'creative_clarification','text':question})
 
 
@@ -247,8 +260,4 @@ def answer(state, text, store, visitor):
     except Exception:
         state.creative_spec.character_reference_plan=plan
         raise
-    if result.get('status')!='awaiting_clarification':
-        message=('The shared style is confirmed. All characters will use it for their three-view references.'
-                 if state.creative_spec.enriched_context.get('ui_language')=='en' else '统一风格已确认，所有人物三视图都会按这套风格制作。')
-        ask(state,[message])
     return result
