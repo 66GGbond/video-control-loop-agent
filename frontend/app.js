@@ -1254,6 +1254,7 @@ function render(state) {
   if (!hasPlan) {
     document.querySelector("#agent-video-action").hidden = true;
     document.querySelector("#version-review-bar").hidden = true;
+    window.dispatchEvent(new CustomEvent("vclstatechange", {detail:state}));
     return;
   }
 

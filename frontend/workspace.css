@@ -120,3 +120,28 @@ body[data-workspace=history] #creative-agent,body[data-workspace=history] #creat
 .history-project-type{padding:3px 6px;border-radius:5px;background:#a57aff12;color:#b8a2d0;margin-right:auto}.history-card-footer time{margin-right:8px}#new-project-kind{width:100%;padding:9px;background:#130e1e;color:var(--text);border:1px solid #513961;border-radius:8px}
 
 .history-type-tabs{display:flex;gap:6px;margin:-6px 0 24px}.history-type-tabs button{padding:8px 13px;border:1px solid transparent;border-radius:9px;background:none;color:var(--muted);font:inherit;font-size:12px;cursor:pointer}.history-type-tabs button[aria-selected=true]{background:#a57aff17;color:#e5d6ff;border-color:#a57aff36}
+
+/* Page identity sits above the project-level tools. */
+#vcl-workspace > .hero {display:block;margin-bottom:26px;}
+#vcl-workspace > .hero h1 {margin:0;font-size:clamp(28px,3.2vw,46px);line-height:1.16;letter-spacing:-.045em;}
+.project-toolbar {display:flex;align-items:center;justify-content:space-between;gap:18px;padding:17px 20px;margin-bottom:24px;background:rgba(25,21,37,.48);border:1px solid #b49bff22;border-radius:16px;}
+.current-project {min-width:0;flex:1;}
+.current-project-label {display:flex;align-items:center;gap:7px;font-size:11px;color:var(--muted);margin-bottom:4px;}
+.current-project-label i {width:5px;height:5px;border-radius:50%;background:var(--green);}
+.project-name-form {display:flex;align-items:center;max-width:480px;gap:5px;}
+.project-name-form input {min-width:5em;width:auto;field-sizing:content;max-width:100%;padding:3px 0;background:transparent;border:1px solid transparent;border-radius:5px;color:var(--text);font-family:inherit;font-size:19px;font-weight:600;line-height:1.4;text-overflow:ellipsis;}
+.project-name-form input[readonly] {cursor:default;outline:none;}
+.project-name-form input:not([readonly]) {border-color:var(--purple);padding-left:7px;}
+.project-name-form .canvas-icon {flex:none;width:30px;height:30px;color:var(--muted);}
+.project-name-form .ui-icon {width:16px;height:16px;}
+.project-toolbar-actions {display:flex;align-items:center;gap:10px;flex:none;}
+.project-toolbar-actions select {max-width:180px;height:38px;margin:0;background:#15111f;border:1px solid var(--line);color:var(--muted);border-radius:9px;padding:0 12px;font:inherit;font-size:12px;}
+.project-toolbar-actions #reset {display:flex;align-items:center;gap:7px;white-space:nowrap;padding:8px 13px;font-size:12px;border-radius:9px;}
+.project-toolbar-actions #reset .ui-icon {width:16px;height:16px;}
+#project-toolbar-status {font-size:12px;color:var(--red);}
+@container vcl (max-width:650px) {
+  .project-toolbar {flex-wrap:wrap;gap:12px;padding:15px;}
+  .current-project {flex-basis:100%;}
+  .project-toolbar-actions {width:100%;}
+  .project-toolbar-actions select {flex:1;max-width:none;min-width:0;}
+}

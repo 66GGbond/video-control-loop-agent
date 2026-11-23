@@ -160,6 +160,20 @@ class ProjectHTTPTests(unittest.TestCase):
         self.assertEqual(self.request('/api/projects')[1]['projects'],[])
         self.assertEqual(self.request('/api/projects/open',{'project_id':state.project_id})[0],400)
 
+    def test_current_project_name_follows_create_rename_and_switch(self):
+        _,first=self.request('/api/reset',{'title':'海边旅行'})
+        self.assertEqual(first['project_name'],'海边旅行')
+        self.request('/api/projects/rename',{'project_id':first['project_id'],'title':'夏日海边'})
+        self.assertEqual(self.request('/api/state')[1]['project_name'],'夏日海边')
+        _,second=self.request('/api/reset',{'title':'城市漫游'})
+        self.assertEqual(second['project_name'],'城市漫游')
+        self.request('/api/projects/open',{'project_id':first['project_id']})
+        restored=self.request('/api/state')[1]
+        self.assertEqual(restored['project_id'],first['project_id'])
+        self.assertEqual(restored['project_name'],'夏日海边')
+        # Persisting the older domain name must not overwrite the user's rename.
+        self.assertEqual(self.request('/api/state')[1]['project_name'],'夏日海边')
+
     def test_revisions_stay_in_same_project_and_old_project_can_be_continued(self):
         def plan(prompt,*args,**kwargs):
             state=create_demo_state(prompt);state.status='planning_ready';return state

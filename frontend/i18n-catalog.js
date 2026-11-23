@@ -1,5 +1,6 @@
 // Interface copy only. User briefs and model prose are not machine-translated.
 window.I18N_CATALOG = [
+ ["Project toolbar","项目工具栏"], ["Current project","当前项目"], ["Choose project","选择项目"], ["Untitled project","未命名项目"],
  ["All projects","全部项目"], ["Canvas projects","画布项目"],
  ["Project type","项目类型"], ["Canvas project","画布项目"], ["Create project","创建项目"], ["Optional — Agent names it from your brief","可自行命名；留空则由 Agent 根据需求命名"],
  ["Awaiting creative clarification","等待创意确认"],

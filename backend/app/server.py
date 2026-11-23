@@ -755,6 +755,11 @@ class DemoHandler(SimpleHTTPRequestHandler):
     def _json(self, status: HTTPStatus, data: dict):
         if hasattr(self, "visitor_id"):
             SESSIONS.save(self.visitor_id, self.state)
+            if data.get('project_id') == self.state.project_id and 'creative_spec' in data:
+                with SESSIONS.connect() as db:
+                    project = db.execute("SELECT title FROM projects WHERE visitor_id=? AND id=? AND kind='vcl'", (self.visitor_id, self.state.project_id)).fetchone()
+                if project:
+                    data['project_name'] = project['title']
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")

@@ -35,7 +35,7 @@ window.ProjectHistory=(()=>{
     form.addEventListener('submit',async event=>{
       event.preventDefault();if(saving)return;if(!input.value.trim()){input.focus();return;}
       saving=true;save.disabled=true;
-      try{const data=await endpoint('/api/projects/rename',{method:'POST',body:JSON.stringify({project_id:project.id,title:input.value.trim()})});projects=data.projects;editing=null;renderCards();}
+      try{const data=await endpoint('/api/projects/rename',{method:'POST',body:JSON.stringify({project_id:project.id,title:input.value.trim()})});projects=data.projects;editing=null;window.dispatchEvent(new CustomEvent('projectnameschange',{detail:projects}));renderCards();}
       catch(error){message(error.message);saving=false;save.disabled=false;}
     });
     input.addEventListener('keydown',event=>{if(event.key==='Escape'){editing=null;renderCards();}});
