@@ -242,6 +242,7 @@ class ProjectState:
     pending_user_direction: str = ""
     # Submitted conversation turns, independent of the changing active plan.
     conversation: List[Dict[str, Any]] = field(default_factory=list)
+    project_name: str = ""
 
 
 def to_jsonable(value: Any) -> Any:

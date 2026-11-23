@@ -54,6 +54,7 @@ class SessionStore:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS visitors (id TEXT PRIMARY KEY, state TEXT);
+                CREATE TABLE IF NOT EXISTS canvas_projects (visitor_id TEXT PRIMARY KEY,id TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS canvases (visitor_id TEXT PRIMARY KEY, revision INTEGER NOT NULL, document TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS projects (visitor_id TEXT NOT NULL, id TEXT NOT NULL, title TEXT NOT NULL, title_source TEXT NOT NULL,
                     state TEXT NOT NULL, canvas TEXT NOT NULL, workspace TEXT NOT NULL, summary TEXT NOT NULL,
@@ -65,7 +66,42 @@ class SessionStore:
             db.execute("INSERT OR IGNORE INTO settings VALUES ('secret',?)", (secrets.token_hex(32),))
             self.secret = db.execute("SELECT value FROM settings WHERE key='secret'").fetchone()[0].encode()
         os.chmod(self.path, 0o600)
+        self._separate_projects()
         self._migrate_projects()
+
+    def _separate_projects(self):
+        from .projects import _snapshot,canvas_ident
+        from .canvas import empty_canvas
+        from .demo import create_empty_state
+        with self.connect() as db:
+            if 'kind' not in {r[1] for r in db.execute('PRAGMA table_info(projects)')}:
+                db.execute("ALTER TABLE projects ADD COLUMN kind TEXT NOT NULL DEFAULT ''")
+            if db.execute("SELECT 1 FROM settings WHERE key='separate_project_types_v2'").fetchone():return
+            for row in db.execute('SELECT * FROM projects').fetchall():
+                state=decode(json.loads(row['state']));canvas=json.loads(row['canvas'])
+                has_vcl=bool(state.creative_spec.source_prompt or state.creative_spec.goal or state.project_name)
+                if has_vcl:
+                    _snapshot(db,row['visitor_id'],state,empty_canvas(),'vcl')
+                if canvas['nodes'] or canvas['title'] not in {'','Untitled canvas'}:
+                    ident=uuid.uuid4().hex if has_vcl else row['id']
+                    blank=create_empty_state();blank.project_id=ident
+                    _snapshot(db,row['visitor_id'],blank,canvas,'canvas')
+                    active=db.execute('SELECT document FROM canvases WHERE visitor_id=?',(row['visitor_id'],)).fetchone()
+                    if active and json.loads(active[0])==canvas:
+                        db.execute('INSERT OR REPLACE INTO canvas_projects VALUES (?,?)',(row['visitor_id'],ident))
+                    if ident!=row['id']:
+                        prefix=row['id']+':'
+                        for task in db.execute('SELECT node_id,data FROM image_tasks WHERE visitor_id=?',(row['visitor_id'],)).fetchall():
+                            if task[0].startswith(prefix):
+                                db.execute('INSERT OR IGNORE INTO image_tasks VALUES (?,?,?)',(row['visitor_id'],ident+':'+task[0][len(prefix):],task[1]))
+                elif not has_vcl:
+                    db.execute('DELETE FROM projects WHERE visitor_id=? AND id=?',(row['visitor_id'],row['id']))
+            for row in db.execute('SELECT id,state FROM visitors WHERE state IS NOT NULL').fetchall():
+                state=decode(json.loads(row['state']))
+                if state.project_id==canvas_ident(db,row['id']):
+                    state.project_id=uuid.uuid4().hex
+                    db.execute('UPDATE visitors SET state=? WHERE id=?',(json.dumps(encode(state)),row['id']))
+            db.execute("INSERT INTO settings VALUES ('separate_project_types_v2','1')")
 
     def _migrate_projects(self):
         from .projects import snapshot
@@ -90,7 +126,7 @@ class SessionStore:
                         if node.get('kind') == 'image_task':
                             legacy = db.execute('SELECT data FROM image_tasks WHERE visitor_id=? AND node_id=?', (row['id'],node['id'])).fetchone()
                             if legacy:
-                                db.execute('INSERT OR IGNORE INTO image_tasks VALUES (?,?,?)', (row['id'], state.project_id + ':' + node['id'], legacy[0]))
+                                db.execute('INSERT OR IGNORE INTO image_tasks VALUES (?,?,?)', (row['id'], self._canvas_id(db,row['id']) + ':' + node['id'], legacy[0]))
                                 db.execute('DELETE FROM image_tasks WHERE visitor_id=? AND node_id=?',(row['id'],node['id']))
                     db.execute('UPDATE canvases SET document=? WHERE visitor_id=?', (json.dumps(document,ensure_ascii=False),row['id']))
                 db.execute('UPDATE visitors SET state=? WHERE id=?', (json.dumps(encode(state),ensure_ascii=False),row['id']))
@@ -133,7 +169,7 @@ class SessionStore:
         from .canvas import empty_canvas
         with self.connect() as db:
             row = db.execute("SELECT revision,document FROM canvases WHERE visitor_id=?", (visitor,)).fetchone()
-        return {"revision": row[0], "document": json.loads(row[1])} if row else {"revision": 0, "document": empty_canvas()}
+        return {"revision": row[0] if row else 0,"document":json.loads(row[1]) if row else empty_canvas(),"project_id":self.canvas_project(visitor)}
 
     def save_canvas(self, visitor, revision, document):
         with self.connect() as db:
@@ -154,3 +190,11 @@ class SessionStore:
         with self.connect() as db:
             row = db.execute('SELECT revision FROM canvases WHERE visitor_id=?',(visitor,)).fetchone()
             db.execute('INSERT OR REPLACE INTO canvases VALUES (?,?,?)',(visitor,row[0]+1 if row else 1,json.dumps(empty_canvas())))
+
+    @staticmethod
+    def _canvas_id(db,visitor):
+        from .projects import canvas_ident
+        return canvas_ident(db,visitor)
+
+    def canvas_project(self,visitor):
+        with self.connect() as db:return self._canvas_id(db,visitor)

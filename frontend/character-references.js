@@ -46,7 +46,7 @@ async function prepareCharacterReferences() {
   renderCharacterReferences(renderedState);return characterPlanningPending;
 }
 function scheduleProductionDefaults(state) {
-  if(location.hash==='#history'||document.body.dataset.workspace==='history')return;
+  if(['#history','#canvas'].includes(location.hash)||['history','canvas'].includes(document.body.dataset.workspace))return;
   if(!['planning_ready','awaiting_first_video','awaiting_repair_upload'].includes(state.status)||!state.creative_spec.shots?.length)return;
   const key=state.project_id+JSON.stringify([state.creative_spec.source_prompt,state.creative_spec.shots]);
   if(productionAttempts.has(key))return;

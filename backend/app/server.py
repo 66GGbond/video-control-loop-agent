@@ -168,7 +168,11 @@ def visitor_request(method):
                 if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
                     return self._json(415, {"error": "请使用 JSON 请求。"})
             expected = self.headers.get('X-Project-ID')
-            if expected and expected != self.state.project_id and urlparse(self.path).path not in {'/api/projects','/api/projects/open','/api/projects/rename','/api/project-titles'}:
+            canvas_path=urlparse(self.path).path in {'/api/canvas','/api/new-canvas','/api/recommend-image-model','/api/generate-image','/api/image-results'} or urlparse(self.path).path.startswith('/api/image-task/')
+            expected_canvas=self.headers.get('X-Canvas-ID')
+            if canvas_path and expected_canvas and expected_canvas!=SESSIONS.canvas_project(self.visitor_id):
+                return self._json(HTTPStatus.CONFLICT,{'error':'画布项目已切换，请刷新后继续。'})
+            if not canvas_path and expected and expected != self.state.project_id and urlparse(self.path).path not in {'/api/projects','/api/projects/open','/api/projects/rename','/api/project-titles'}:
                 return self._json(HTTPStatus.CONFLICT, {'error': '当前项目已在其他页面切换，请刷新后继续。'})
             SESSIONS.save(self.visitor_id, self.state)
             try:
@@ -200,7 +204,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
         if path == "/api/canvas":
             return self._json(HTTPStatus.OK, SESSIONS.load_canvas(self.visitor_id))
         if path.startswith('/api/image-task/'):
-            return self._json(HTTPStatus.OK, ImageTasks(SESSIONS,self.state.project_id).get(self.visitor_id,path.rsplit('/',1)[-1]))
+            return self._json(HTTPStatus.OK, ImageTasks(SESSIONS,SESSIONS.canvas_project(self.visitor_id)).get(self.visitor_id,path.rsplit('/',1)[-1]))
         if path == '/api/image-results':
             with SESSIONS.connect() as db:
                 tasks=db.execute('SELECT node_id,data FROM image_tasks WHERE visitor_id=?',(self.visitor_id,)).fetchall()
@@ -209,7 +213,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
             results=[]
             for row in reversed(tasks):
                 job=json.loads(row['data']);run=job.get('run_id')
-                if (row['node_id'].startswith(self.state.project_id+':') or row['node_id'] in character_tasks) and run in ids and job.get('status')=='succeeded':
+                if (row['node_id'].startswith(SESSIONS.canvas_project(self.visitor_id)+':') or row['node_id'] in character_tasks) and run in ids and job.get('status')=='succeeded':
                     results.append({'run_id':run,'name':'Seedream '+run[:8]})
             return self._json(HTTPStatus.OK, {'results':results})
         if path.startswith('/api/image-output/'):
@@ -224,6 +228,16 @@ class DemoHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         try:
+            if path == '/api/new-canvas':
+                payload=self._read_json();name=payload.get('title','')
+                if not isinstance(name,str) or len(name.strip())>80:raise ValueError('项目名称需要少于 80 个字符。')
+                SESSIONS.clear_canvas(self.visitor_id)
+                with SESSIONS.connect() as db:
+                    db.execute('INSERT OR REPLACE INTO canvas_projects VALUES (?,?)',(self.visitor_id,uuid.uuid4().hex))
+                if name.strip():
+                    current=SESSIONS.load_canvas(self.visitor_id);current['document']['title']=name.strip()
+                    SESSIONS.save_canvas(self.visitor_id,current['revision'],current['document'])
+                return self._json(HTTPStatus.OK,{'project_id':SESSIONS.canvas_project(self.visitor_id),'workspace':'canvas'})
             if path == '/api/projects/workspace':
                 Projects(SESSIONS).workspace(self.visitor_id,self.state.project_id,self._read_json().get('workspace'))
                 return self._json(HTTPStatus.OK, {'saved':True})
@@ -237,7 +251,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
             if path == '/api/projects/open':
                 payload = self._read_json()
                 self.state, workspace = Projects(SESSIONS).open(self.visitor_id,payload.get('project_id'))
-                return self._json(HTTPStatus.OK, {'project_id':self.state.project_id,'workspace':workspace})
+                return self._json(HTTPStatus.OK, {'project_id':payload.get('project_id'),'workspace':workspace})
             if path in {'/api/create-project', '/api/reset', '/api/revise-brief', '/api/confirm-context'} and characters.running(self.state, SESSIONS, self.visitor_id):
                 return self._json(HTTPStatus.CONFLICT, {'error': '人物四视图正在生成，请等待结果后再修改或重置项目。'})
             if path == '/api/attach-character-references':
@@ -258,7 +272,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
             if path in {'/api/recommend-image-model','/api/generate-image'}:
                 payload=self._read_json();node=payload.get('node_id')
                 if not isinstance(node,str):raise ValueError('Select an image task')
-                document=SESSIONS.load_canvas(self.visitor_id)['document'];service=ImageTasks(SESSIONS,self.state.project_id)
+                document=SESSIONS.load_canvas(self.visitor_id)['document'];service=ImageTasks(SESSIONS,SESSIONS.canvas_project(self.visitor_id))
                 if path=='/api/recommend-image-model':result=service.recommend(self.visitor_id,node,document)
                 else:result=service.start(self.visitor_id,node,document,payload.get('choice_id'),payload.get('model_id'))
                 return self._json(HTTPStatus.ACCEPTED if result.get('status')=='running' else HTTPStatus.OK,result)
@@ -310,8 +324,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 )
                 if previous.status == 'ready_for_brief':
                     self.state.project_id = previous.project_id
-                else:
-                    SESSIONS.clear_canvas(self.visitor_id)
+                    self.state.project_name = previous.project_name
                 record_exchange(self.state, prompt)
                 return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/confirm-context":
@@ -718,8 +731,10 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 ORCHESTRATOR.run_once(self.state)
                 return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/reset":
-                SESSIONS.clear_canvas(self.visitor_id)
+                payload=self._read_json();name=payload.get("title","")
+                if not isinstance(name,str) or len(name.strip())>80:raise ValueError("项目名称需要少于 80 个字符。")
                 self.state = create_empty_state()
+                self.state.project_name=name.strip()
                 return self._json(HTTPStatus.OK, present(self.state))
             return self._json(HTTPStatus.NOT_FOUND, {"error": "Unknown endpoint"})
         except ValueError as exc:

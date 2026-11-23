@@ -1729,18 +1729,23 @@ document.querySelector("#generate-repair").addEventListener("click", event => {
   }
   generateVideo(event);
 });
-document.querySelector("#reset").addEventListener("click", async () => {
-  try {
+window.openNewProject=(kind='vcl',choose=false)=>{
+  document.querySelector('#new-project-kind').value=kind;
+  document.querySelector('#new-project-kind').hidden=!choose;
+  document.querySelector('#new-project-kind-label').hidden=!choose;
+  document.querySelector('#new-project-name').value='';
+  document.querySelector('#new-project-dialog').showModal();document.querySelector('#new-project-name').focus();
+};
+document.querySelector('#reset').addEventListener('click',()=>window.openNewProject('vcl'));
+document.querySelector('#new-project-cancel').addEventListener('click',()=>document.querySelector('#new-project-dialog').close());
+document.querySelector('#new-project-form').addEventListener('submit',async event=>{
+  event.preventDefault();const button=event.submitter;button.disabled=true;
+  try{
     await window.CanvasImages.flush();
-    clearReferenceAttachments();
-    if (generationPollTimer) window.clearTimeout(generationPollTimer);
-    generationPollTimer = null;
-    generatedEvidencePending = false;
-    setEditorText("");
-    document.querySelector("#target-market").value = "";
-    render(await endpoint("/api/reset", { method: "POST" }));
-    setCreativeAgentOpen(false);
-  } catch (error) { I18n.alert(error.message); }
+    const kind=document.querySelector('#new-project-kind').value,title=document.querySelector('#new-project-name').value.trim();
+    await endpoint(kind==='canvas'?'/api/new-canvas':'/api/reset',{method:'POST',body:JSON.stringify({title})});
+    location.assign('/?new='+Date.now()+'#'+kind);
+  }catch(error){I18n.alert(error.message);button.disabled=false;}
 });
 
 refresh();

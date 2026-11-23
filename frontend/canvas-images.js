@@ -2,7 +2,7 @@
 window.CanvasImages=(()=>{
   const states=new Map(),selected=new Map(),pending=new Set(),polls=new Map();let host;
   const api=async(path,body)=>{
-    const response=await fetch(path,{headers:{'Content-Type':'application/json','X-Project-ID':window.VCLBridge.state()?.project_id||''},...(body===undefined?{}:{method:'POST',body:JSON.stringify(body)})});
+    const response=await fetch(path,{headers:{'Content-Type':'application/json','X-Project-ID':window.VCLBridge.state()?.project_id||'','X-Canvas-ID':host?.getProjectId?.()||''},...(body===undefined?{}:{method:'POST',body:JSON.stringify(body)})});
     const data=await response.json();if(!response.ok)throw new Error(data.error||'Image request failed');return data;
   };
   function controlsDisabled(id){return pending.has(id)||states.get(id)?.status==='running';}

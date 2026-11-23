@@ -5,14 +5,9 @@
   const icon=name=>`<svg class="ui-icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
   const labels={text:'Text',note:'Note',image:'Image',audio:'Audio',video:'Video reference',task:'Video task',image_task:'Image generation',output:'Video version'};
   const kinds={text:'text',note:'note',image:'image',audio:'audio',video:'video',task:'task',image_task:'image-task',output:'video'};
-  let doc=null,revision=0,loaded=false,loading=null,dirty=false,saving=false,saveTimer=null,changeId=0,saveError=false,saveBlocked=false,saveFailures=0;
+  let doc=null,revision=0,canvasProjectId='',loaded=false,loading=null,dirty=false,saving=false,saveTimer=null,changeId=0,saveError=false,saveBlocked=false,saveFailures=0;
   let selection=new Set(),selectedEdge=null,connecting=null,tool='select',showEdges=true,space=false,gesture=null,addPoint=null;
-  let undo=[],redo=[],toastTimer=null,textEditSnapshot=null,currentState=window.VCLBridge.state(),lastWorkspaceRecord='';
-  function rememberWorkspace(){
-    const name=document.body.dataset.workspace,key=currentState?.project_id+':'+name;
-    if(!currentState||!['vcl','canvas'].includes(name)||lastWorkspaceRecord===key)return;
-    lastWorkspaceRecord=key;endpoint('/api/projects/workspace',{method:'POST',body:JSON.stringify({workspace:name})}).catch(()=>{lastWorkspaceRecord='';});
-  }
+  let undo=[],redo=[],toastTimer=null,textEditSnapshot=null,currentState=window.VCLBridge.state();
   const id=()=>`n_${crypto.randomUUID().replaceAll('-','')}`;
   function notify(text) {const el=$('workspace-toast');el.textContent=text;el.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.hidden=true,4300);}
   function status(value,message) {const el=$('canvas-save-status');el.dataset.state=value;el.title=message||({saved:'Draft saved automatically',saving:'Saving draft…',error:'Save failed. Export your draft before reloading.'}[value]);el.setAttribute('aria-label',el.title);}
@@ -22,7 +17,7 @@
     if(!doc||!dirty||saving||saveError)return;
     saving=true;const at=changeId;
     try {
-      const response=await fetch('/api/canvas',{method:'POST',headers:{'Content-Type':'application/json','X-Project-ID':currentState?.project_id||''},body:JSON.stringify({revision,document:doc})});
+      const response=await fetch('/api/canvas',{method:'POST',headers:{'Content-Type':'application/json','X-Project-ID':currentState?.project_id||'','X-Canvas-ID':canvasProjectId},body:JSON.stringify({revision,document:doc})});
       const data=await response.json();if(!response.ok){const error=new Error(data.error||'Save failed.');error.status=response.status;throw error;}
       revision=data.revision;saveFailures=0;
       if(at===changeId){dirty=false;status('saved');}
@@ -40,7 +35,7 @@
     loading=(async()=>{
       const projectAtLoad=currentState?.project_id;
       const response=await fetch('/api/canvas',{headers:{'X-Project-ID':projectAtLoad||''}});if(!response.ok)throw new Error('Canvas could not be loaded.');
-      const data=await response.json();if(projectAtLoad&&projectAtLoad!==currentState?.project_id)return;doc=data.document;revision=data.revision;loaded=true;status('saved');$('canvas-title').value=doc.title==='Untitled canvas'?'':doc.title;
+      const data=await response.json();if(projectAtLoad&&projectAtLoad!==currentState?.project_id)return;doc=data.document;revision=data.revision;canvasProjectId=data.project_id;loaded=true;status('saved');$('canvas-title').value=doc.title==='Untitled canvas'?'':doc.title;
       render();window.CanvasImages.restore();
     })().finally(()=>loading=null);
     return loading;
@@ -62,8 +57,8 @@
       if(active)button.setAttribute('aria-current','page');else button.removeAttribute('aria-current');
     });
     if(remember){history.replaceState(null,'','#'+name);}
-    rememberWorkspace();
-    if(name!=='history'&&window.VCLBridge.state())scheduleProductionDefaults(window.VCLBridge.state());
+
+    if(name==='vcl'&&window.VCLBridge.state())scheduleProductionDefaults(window.VCLBridge.state());
     if(name==='history')window.ProjectHistory.load();
     if(name==='canvas')try {await load();stage.focus({preventScroll:true});}catch(error){notify(error.message);}
   }
@@ -372,7 +367,7 @@
       // The backend is the authority for imported schema/media, and revision prevents stale writes.
       if(saving||dirty)throw new Error('Wait for the canvas to save before importing.');
       if(!window.confirm(I18n.text('Replace this canvas? You can undo this change.')))return;
-      const response=await fetch('/api/canvas',{method:'POST',headers:{'Content-Type':'application/json','X-Project-ID':currentState?.project_id||''},body:JSON.stringify({revision,document:incoming})});
+      const response=await fetch('/api/canvas',{method:'POST',headers:{'Content-Type':'application/json','X-Project-ID':currentState?.project_id||'','X-Canvas-ID':canvasProjectId},body:JSON.stringify({revision,document:incoming})});
       const data=await response.json();if(!response.ok)throw new Error(data.error||'Invalid canvas file');
       checkpoint();revision=data.revision;
       const saved=await (await fetch('/api/canvas')).json();doc=saved.document;revision=saved.revision;
@@ -390,7 +385,7 @@
     const spec=state.creative_spec;
     if(spec?.source_prompt)item('Brief','text',()=>add('text',{text:spec.source_prompt,title:'Brief'}));
     (spec?.multimodal_assets||[]).forEach((asset,index)=>item(asset.name,asset.media_type,async()=>{
-      const response=await fetch('/api/canvas-reference',{method:'POST',headers:{'Content-Type':'application/json','X-Project-ID':currentState?.project_id||''},body:JSON.stringify({project_id:state.project_id,index})});
+      const response=await fetch('/api/canvas-reference',{method:'POST',headers:{'Content-Type':'application/json','X-Project-ID':currentState?.project_id||'','X-Canvas-ID':canvasProjectId},body:JSON.stringify({project_id:state.project_id,index})});
       const data=await response.json();if(!response.ok)throw new Error(data.error);add(data.asset.media_type,{asset:data.asset,title:data.asset.name});
     },asset.preview_data_url));
     (state.version_reviews||[]).filter(review=>review.asset?.local_video_url).forEach(review=>item(review.version_id.toUpperCase(),'video',()=>add('output',{title:review.version_id.toUpperCase(),version_id:review.version_id,project_id:state.project_id,text:review.status}),review.asset.poster_data_url));
@@ -403,16 +398,13 @@
     dialog.replaceChildren();const img=document.createElement('img');img.src=node.asset.preview_data_url||node.asset.data_url;img.alt=node.asset.name;img.style.width='100%';dialog.append(img);dialog.showModal();
   }
   window.addEventListener('vclstatechange',event=>{
-    const prior=currentState;currentState=event.detail;rememberWorkspace();
-    if(prior&&prior.project_id!==currentState.project_id){
-      clearTimeout(saveTimer);doc=null;loaded=false;loading=null;dirty=false;saveError=false;saveBlocked=false;selection.clear();selectedEdge=null;undo=[];redo=[];window.CanvasImages.reset();
-      if(!root.hidden)load().catch(error=>notify(error.message));
-    }
+    const prior=currentState;currentState=event.detail;
+
     if(!root.hidden&&!$('canvas-library').hidden)library();
     if(doc?.nodes.some(n=>n.kind==='output') && prior?.project_id!==currentState.project_id)render();
   });
   document.addEventListener('pointerdown',event=>{if(!event.target.closest('#canvas-menu')&&!event.target.closest('#canvas-stage'))$('canvas-menu').hidden=true;});
-  window.CanvasImages.mount({getDocument:()=>doc,render,notify,changed,add,checkpoint,
+  window.CanvasImages.mount({getDocument:()=>doc,getProjectId:()=>canvasProjectId,render,notify,changed,add,checkpoint,
     async flush(){while(saving)await new Promise(resolve=>setTimeout(resolve,50));if(saveError)throw new Error('Wait for the draft to finish saving.');clearTimeout(saveTimer);await save();if(dirty)throw new Error('Wait for the draft to finish saving.');},
     async addResult(result,taskId){
       if(doc.nodes.some(n=>n.image_run_id===result.run_id))return;

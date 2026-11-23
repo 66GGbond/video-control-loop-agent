@@ -77,9 +77,9 @@ class ImageHTTPTests(unittest.TestCase):
         self.assertEqual(result['source'],'policy_fallback');self.assertIn(result['recommended_model'],seedream.KEYS)
 
     def test_successful_result_persists_after_project_reset_and_is_session_isolated(self):
-        choice=self.recommend();project=self.store.load(self.visitor).project_id;service=ImageTasks(self.store,project);result={**choice,'run_id':choice['choice_id'],'selected_model':seedream.PRO,'status':'running'}
+        choice=self.recommend();project=self.store.canvas_project(self.visitor);service=ImageTasks(self.store,project);result={**choice,'run_id':choice['choice_id'],'selected_model':seedream.PRO,'status':'running'}
         with patch('backend.app.image_tasks.seedream.generate',return_value=PNG):service._work(self.visitor,'draw',result,inputs(document(),'draw'))
-        self.request('/api/reset',{});self.assertEqual(self.request('/api/image-task/draw')[1],{})
+        self.request('/api/reset',{});self.assertEqual(self.request('/api/image-task/draw')[1]['status'],'succeeded')
         self.request('/api/projects/open',{'project_id':project});saved=self.request('/api/image-task/draw')[1]
         self.assertEqual(saved['status'],'succeeded');self.assertEqual(service.output(self.visitor,saved['run_id'])[1],PNG)
         self.assertIsNone(service.output('different-session',saved['run_id']))

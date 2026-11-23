@@ -116,3 +116,7 @@ body main#history-workspace[hidden]{display:none}
 body[data-workspace=history] #creative-agent,body[data-workspace=history] #creative-agent-toggle{display:none!important}
 @media(min-width:1700px){.history-projects{grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}}
 @media(max-width:760px){body main#history-workspace{padding:26px 16px 60px}.history-header h1{font-size:23px}.history-header{gap:8px}.history-header button{font-size:11px;padding:8px}.history-projects{grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:15px}}
+
+.history-project-type{padding:3px 6px;border-radius:5px;background:#a57aff12;color:#b8a2d0;margin-right:auto}.history-card-footer time{margin-right:8px}#new-project-kind{width:100%;padding:9px;background:#130e1e;color:var(--text);border:1px solid #513961;border-radius:8px}
+
+.history-type-tabs{display:flex;gap:6px;margin:-6px 0 24px}.history-type-tabs button{padding:8px 13px;border:1px solid transparent;border-radius:9px;background:none;color:var(--muted);font:inherit;font-size:12px;cursor:pointer}.history-type-tabs button[aria-selected=true]{background:#a57aff17;color:#e5d6ff;border-color:#a57aff36}

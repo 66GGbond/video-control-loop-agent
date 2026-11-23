@@ -63,8 +63,8 @@ class CanvasHTTPTests(unittest.TestCase):
         doc=empty_canvas();doc['nodes']=[node('a')]
         with patch.object(local.server.VIDEO_GENERATOR,'submit') as submit:
             self.request('/api/canvas',{'revision':0,'document':doc})
-            project=self.request('/api/state')[1]['project_id'];self.request('/api/reset',{})
-            self.assertEqual(self.request('/api/canvas')[1]['document']['nodes'],[])
+            project=self.request('/api/canvas')[1]['project_id'];self.request('/api/reset',{})
+            self.assertEqual(self.request('/api/canvas')[1]['document'],doc)
             self.request('/api/projects/open',{'project_id':project})
             self.assertEqual(self.request('/api/canvas')[1]['document'],doc)
             submit.assert_not_called()

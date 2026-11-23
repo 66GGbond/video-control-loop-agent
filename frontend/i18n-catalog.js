@@ -1,5 +1,7 @@
 // Interface copy only. User briefs and model prose are not machine-translated.
 window.I18N_CATALOG = [
+ ["All projects","全部项目"], ["Canvas projects","画布项目"],
+ ["Project type","项目类型"], ["Canvas project","画布项目"], ["Create project","创建项目"], ["Optional — Agent names it from your brief","可自行命名；留空则由 Agent 根据需求命名"],
  ["Awaiting creative clarification","等待创意确认"],
  ["Shared style","统一风格"],
  ["Tell the Agent your preferred visual style or clarify its question.","告诉 Agent 你希望统一使用的画面风格，或回答它提出的问题。"],
