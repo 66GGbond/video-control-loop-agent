@@ -673,6 +673,7 @@ async function extractEvaluationFrames(file, evidenceSampling) {
 }
 
 function projectStage(status) {
+  if(['skill_preparation_required','skill_preparation_failed','planning_failed','awaiting_skill_clarification'].includes(status))return 'preparation';
   if (status === "ready_for_brief") return "brief";
   if (status === "awaiting_context_confirmation") return "context";
   if (["planning_ready", "needs_segmentation"].includes(status)) return "plan";
@@ -684,6 +685,7 @@ function renderProjectStatus(state) {
   const characterPlan=state.creative_spec.character_reference_plan;
   const stage = ['planning_ready','awaiting_first_video'].includes(state.status)&&characterPlan?.required ? 'characters' : projectStage(state.status);
   const labels = {
+    preparation: [I18n.language==='zh'?'创作规划尚未完成':'Creative planning incomplete',state.creative_spec.planning_notice,'Skill',I18n.language==='zh'?'在对话中继续':'Continue in conversation'],
     brief: ["Ready for a creative brief", "Describe the video to the Creative Agent to begin the controlled production loop.", "Brief", "Open Creative Agent"],
     context: ["Creative Agent needs one decision", "A missing context field could change a high-impact generation constraint.", "Context", "Answer the Agent"],
     plan: state.status === "needs_segmentation"
@@ -703,7 +705,7 @@ function renderProjectStatus(state) {
   document.querySelector("#project-latest-asset").textContent = latestAsset?.name || "Awaiting input";
   document.querySelector("#project-next-action").textContent = next;
   const sequence = ["brief", "context", "plan", "characters", "version", "quality"];
-  const stageIndex = sequence.indexOf(stage);
+  const stageIndex = stage==='preparation'?1:sequence.indexOf(stage);
   document.querySelectorAll(".project-steps li").forEach((item, index) => {
     item.classList.toggle("active", item.dataset.stage === stage);
     item.classList.toggle("done", index < stageIndex);
@@ -715,6 +717,7 @@ function executionTraceEntries(state) {
   const spec = state.creative_spec || {};
   const context = spec.enriched_context || {};
   const entries = [];
+  if(context.skill_brief?.status==='verified')entries.push({kind:'skill',title:'Uploaded Skills applied',detail:context.skill_brief.applied_skills.join(' · ')});
   if (spec.source_prompt || spec.goal) {
     entries.push({
       kind: "brief",
@@ -731,7 +734,7 @@ function executionTraceEntries(state) {
     });
   }
   const binding = spec.generation_contract?.provider_binding;
-  if (binding?.capability_profile?.profile_id) {
+  if (binding?.capability_profile?.profile_id&&!['skill_preparation_required','skill_preparation_failed','planning_failed','awaiting_skill_clarification'].includes(state.status)) {
     const reference = spec.generation_contract?.reference_strategy || {};
     const mode = human(binding.intended_mode || "unavailable");
     const referenceNote = reference.mode === "reference_retained_not_applied"
@@ -1245,7 +1248,7 @@ function renderReferenceMedia(spec) {
     document.querySelector('#reference-detail').append(button);
   }
   const skills=spec.enriched_context?.uploaded_skills||[];
-  if(skills.length){const tag=document.createElement('span');tag.className='imported-skills';tag.textContent='Skill · '+skills.map(s=>s.path).join('、');document.querySelector('#reference-detail').append(tag);}
+  if(skills.length){const tag=document.createElement('span');tag.className='imported-skills';tag.textContent='Skill · '+[...new Set(skills.map(s=>s.path))].join('、');document.querySelector('#reference-detail').append(tag);}
   const referenceVisual = document.querySelector("#reference-visual");
   const referencePreview = document.querySelector("#reference-preview");
   referenceVisual.hidden = !(reference && reference.preview_data_url);
@@ -1255,7 +1258,7 @@ function renderReferenceMedia(spec) {
 
 function render(state) {
   renderedState = state;
-  const execution=state.creative_spec.enriched_context?.skill_execution;
+  const execution=state.creative_spec.enriched_context?.skill_execution||state.creative_spec.enriched_context?.skill_brief;
   const skillResult=document.querySelector('#skill-execution-result');skillResult.hidden=!execution;
   document.querySelector('#skill-execution-copy').textContent=execution?.status==='verified'?((execution.execution_steps||[]).map(s=>s.step+'\n'+s.result).join('\n\n')+'\n\n'+(execution.conflicts||[]).join('\n')+'\n\n'+execution.optimized_prompt):I18n.text('Skill preparation is incomplete. Video generation is blocked.');
   renderModelSelection(state);
@@ -1266,7 +1269,7 @@ function render(state) {
     lastCurrentVersionId = state.current_version_id;
   }
   const spec = state.creative_spec;
-  const hasPlan = Boolean(spec.goal && spec.shots.length);
+  const hasPlan = Boolean(spec.goal && spec.shots.length)&&!['skill_preparation_required','skill_preparation_failed','planning_failed','awaiting_skill_clarification'].includes(state.status);
   const enrichedContext = spec.enriched_context || {};
   const promptInput = document.querySelector("#creative-prompt");
   renderProjectStatus(state);
@@ -1554,6 +1557,8 @@ async function submitChat(event) {
       // way into the provider request.
       const imports=await serializeImports(prompt,files);
       render(await endpoint('/api/create-project',{method:'POST',body:JSON.stringify({prompt,...imports,language:I18n.language})}));
+    } else if(['skill_preparation_required','skill_preparation_failed','planning_failed','awaiting_skill_clarification'].includes(renderedState.status)){
+      render(await endpoint('/api/revise-brief',{method:'POST',body:JSON.stringify({instruction:prompt,language:I18n.language})}));
     } else if(renderedState.status==='generated_video_ready'&&/^(重试|继续|重新准备|重试证据|retry)[。！!,.\s]*$/i.test(prompt)){
       await prepareGeneratedEvidence(renderedState);
     } else if(renderedState.status==='awaiting_context_confirmation'){

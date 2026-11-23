@@ -22,6 +22,11 @@ def messages(state: ProjectState) -> list[dict]:
         result = []
         for saved in state.conversation:
             message = dict(saved)
+            if message.get('kind')=='skill_execution_failed':
+                from .skill_execution import failure_message
+                message['text']=failure_message(TimeoutError(),state.creative_spec.enriched_context.get('ui_language','zh')) if 'timed out' in message.get('text','') else message['text']
+            if state.status in {'skill_preparation_required','skill_preparation_failed','planning_failed','awaiting_skill_clarification'} and message.get('kind') in {'creative_clarification','plan_ready','plan_updated','generation_confirmation'}:
+                continue
             if message.get("role") == "assistant" and not message.get("kind"):
                 text = message.get("text", "")
                 # Earlier builds copied the plan into the chat. Keep stored data intact,
@@ -49,7 +54,11 @@ def messages(state: ProjectState) -> list[dict]:
 
 def record_exchange(state: ProjectState, text: str, previous: ProjectState | None = None, reply: str | None = None) -> None:
     prior = ([dict(item) for item in previous.conversation] if previous.conversation else messages(previous)) if previous is not None else []
-    if reply is not None:
+    if state.status=='awaiting_skill_clarification':
+        kind='planning_incomplete';reply=state.creative_spec.enriched_context['skill_clarification']['question']
+    elif state.status in {'skill_preparation_required','skill_preparation_failed','planning_failed'}:
+        kind='planning_incomplete';reply=state.creative_spec.planning_notice
+    elif reply is not None:
         kind = "direction_saved"
     elif state.status == "awaiting_context_confirmation":
         kind = "context_question"
@@ -61,4 +70,4 @@ def record_exchange(state: ProjectState, text: str, previous: ProjectState | Non
         kind = "plan_updated" if previous and previous.status != "awaiting_context_confirmation" else "plan_ready"
     timestamp = datetime.now(timezone.utc).isoformat()
     state.conversation = [*prior, {"id": uuid4().hex, "at": timestamp, "role": "user", "text": text},
-                          {"id": uuid4().hex, "at": timestamp, "role": "assistant", "kind": kind, "text": REPLIES[kind]}]
+                          {"id": uuid4().hex, "at": timestamp, "role": "assistant", "kind": kind, "text": reply if kind=='planning_incomplete' else REPLIES[kind]}]

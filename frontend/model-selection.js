@@ -3,7 +3,7 @@ let generationSettingsPending = null;
 
 function renderModelSelection(state) {
   const panel=document.querySelector('#model-selection-panel'),spec=state.creative_spec;
-  panel.hidden=!Boolean(spec?.goal && spec.shots?.length);
+  panel.hidden=!Boolean(spec?.goal && spec.shots?.length)||['skill_preparation_required','skill_preparation_failed','planning_failed','awaiting_skill_clarification'].includes(state.status);
   if(panel.hidden)return;
   const choice=spec.video_model_selection||{},select=document.querySelector('#video-model-select');
   const eligible=(choice.candidates||[]).filter(c=>c.eligible);

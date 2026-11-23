@@ -1,4 +1,5 @@
 import json
+import io
 import unittest
 from unittest.mock import patch
 from backend.app.tools.ark_responses import DEFAULT_MODEL, request_json, response_text
@@ -20,6 +21,20 @@ def envelope(text):
 
 
 class ArkMigrationTests(unittest.TestCase):
+    def test_streaming_json_waits_for_completion_and_ignores_reasoning(self):
+        events=[{'type':'response.reasoning_summary_text.delta','delta':'not JSON'},
+                {'type':'response.output_text.delta','delta':'{"ok":'},
+                {'type':'response.output_text.delta','delta':'true}'},
+                {'type':'response.completed','response':{'status':'completed'}}]
+        def response(items):return io.BytesIO(''.join('data: '+json.dumps(e)+'\n\n' for e in items).encode())
+        with patch('backend.app.tools.ark_responses.urllib.request.urlopen',return_value=response(events)) as call:
+            self.assertEqual(request_json('offline',DEFAULT_MODEL,'JSON',{},stream=True),{'ok':True})
+            self.assertTrue(json.loads(call.call_args.args[0].data)['stream'])
+        # Even syntactically complete JSON must not pass a dropped/failed stream.
+        for ending in [[],[{'type':'response.incomplete'}],[{'type':'response.failed'}]]:
+            with patch('backend.app.tools.ark_responses.urllib.request.urlopen',return_value=response(events[:-1]+ending)):
+                with self.assertRaises(ValueError):request_json('offline',DEFAULT_MODEL,'JSON',{},stream=True)
+
     def test_responses_payload_preserves_role_instructions_and_uses_json_mode(self):
         instruction = "Project-specific acceptance criteria and reference binding rules. Return JSON."
         payload = {"source_prompt":"保留原始需求", "remaining_budget":2}

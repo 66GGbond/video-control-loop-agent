@@ -18,15 +18,54 @@ class ImportTests(unittest.TestCase):
         from backend.app.agent.planner import ArkControlPlanner
         planner=ArkControlPlanner(api_key='offline')
         docs=[{'path':'western/SKILL.md','text':'Use warm earth colors.'}]
-        with patch('backend.app.agent.planner.request_json',return_value={}) as model,patch.object(planner,'_to_spec',return_value=create_demo_state('film').creative_spec):
-            planner.plan('film',enriched_context={'uploaded_skills':docs})
+        basis={'status':'verified','prompt_sha256':'fixture','optimized_prompt':'Warm earth colors in every shot.'}
+        with patch('backend.app.agent.planner.request_json',return_value={'skill_basis_sha256':'fixture'}) as model,patch.object(planner,'_to_spec',return_value=create_demo_state('film').creative_spec):
+            planner.plan('film',enriched_context={'uploaded_skills':docs,'skill_brief':basis})
         self.assertEqual(model.call_args.args[3]['user_imported_skills'],docs)
+        self.assertEqual(model.call_args.args[3]['prepared_creative_basis'],basis)
 
 class ImportHTTPTests(unittest.TestCase):
     setUp=local.LocalServerTests.setUp
     cleanup=local.LocalServerTests.cleanup
     request=local.LocalServerTests.request
     session=local.LocalServerTests.session
+
+    def test_failed_skill_creation_and_chat_retry_preserve_the_whole_brief(self):
+        docs=[{'path':'SKILL.md','text':'每个镜头使用暖色逆光。'}]
+        prompt='英国古堡，8秒，两人拥抱。'
+        result={'applied_skills':['SKILL.md'],'execution_steps':[{'step':'镜头处理','result':'英国古堡内暖色逆光，两人拥抱。'}],
+                'conflicts':[],'optimized_prompt':'英国古堡内暖色逆光，8秒，两人拥抱。'}
+        audit={'passed':True,'missing':[],'checks':[{'requirement':'暖色逆光','evidence':'暖色逆光'}]}
+        with patch.dict('os.environ',{'ARK_API_KEY':'offline'}),patch('backend.app.skill_execution.request_json',side_effect=TimeoutError('The read operation timed out')),patch.object(server.CONTROL_PLANNER,'plan') as planner,patch.object(server.VIDEO_GENERATOR,'submit') as paid:
+            status,failed=self.request('/api/create-project',{'prompt':prompt,'skill_files':docs})
+            self.assertEqual(status,200,failed);self.assertEqual(failed['status'],'skill_preparation_failed')
+            planner.assert_not_called();paid.assert_not_called()
+        self.assertEqual(failed['creative_spec']['shots'],[])
+        self.assertEqual(failed['conversation'][0]['text'],prompt)
+        self.assertNotIn('timed out',failed['conversation'][-1]['text'])
+        self.assertEqual(self.request('/api/confirm-generation',{'message':'开始生成'})[0],400)
+        spec=create_demo_state(prompt).creative_spec
+        with patch.dict('os.environ',{'ARK_API_KEY':'offline'}),patch('backend.app.skill_execution.request_json',side_effect=[result,audit]),patch.object(server.CONTEXT_AGENT,'enrich',return_value={'status':'ready'}),patch.object(server.CONTROL_PLANNER,'available',return_value=True),patch.object(server.CONTROL_PLANNER,'plan',return_value=spec) as planner,patch.object(server.VIDEO_GENERATOR,'submit') as paid:
+            status,retried=self.request('/api/revise-brief',{'instruction':'重试'})
+            self.assertEqual(status,200,retried);paid.assert_not_called()
+        self.assertEqual(retried['status'],'planning_ready');self.assertEqual(retried['project_id'],failed['project_id'])
+        self.assertEqual(retried['creative_spec']['source_prompt'],prompt)
+        self.assertEqual(planner.call_args.args[2]['skill_brief']['optimized_prompt'],result['optimized_prompt'])
+        self.assertEqual(planner.call_args.args[2]['uploaded_skills'],docs)
+        self.assertEqual(retried['conversation'][-2]['text'],'重试')
+
+    def test_old_prompt_only_skill_plan_cannot_start_later_stages(self):
+        visitor=self.session();state=create_demo_state('英国电影')
+        state.creative_spec.enriched_context['uploaded_skills']=[{'path':'SKILL.md','text':'暖光'}]
+        self.store.save(visitor,state)
+        with patch.object(server.characters,'prepare') as characters,patch('backend.app.agent.model_router.recommend') as recommend,patch.object(server.VIDEO_GENERATOR,'submit') as paid:
+            status,data=self.request('/api/state')
+            self.assertEqual(data['status'],'skill_preparation_required')
+            self.assertEqual(self.request('/api/generate-video',{})[0],400)
+            self.assertEqual(self.request('/api/plan-character-references',{})[0],400)
+            self.assertEqual(self.request('/api/recommend-video-model',{})[0],400)
+            characters.assert_not_called();recommend.assert_not_called();paid.assert_not_called()
+        self.assertEqual(data['project_id'],state.project_id)
 
     def test_legacy_story_region_gate_resumes_same_project_without_generation(self):
         visitor=self.session();state=create_demo_state('1784年英国春季，中文对白，画眉田庄卧室。');state.status='awaiting_context_confirmation'

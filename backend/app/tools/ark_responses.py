@@ -2,6 +2,7 @@
 from __future__ import annotations
 import json
 import os
+import time
 import urllib.request
 
 DEFAULT_MODEL = "doubao-seed-2-1-pro-260915"
@@ -31,16 +32,40 @@ def response_text(raw):
     return result
 
 
-def request_json(api_key, model, system, payload, max_tokens=3000, timeout=90, endpoint=None, content=None):
+def stream_response(response, timeout):
+    """Read SSE incrementally; only a completed assistant response is usable."""
+    started=time.monotonic();data=[];parts=[];size=0
+    for line in response:
+        if time.monotonic()-started>max(300,timeout*3):raise TimeoutError('Model response exceeded its total time limit')
+        size+=len(line)
+        if size>4*1024*1024:raise ValueError('Model response exceeded its size limit')
+        line=line.decode('utf-8').rstrip('\r\n')
+        if line.startswith('data:'):data.append(line[5:].lstrip())
+        elif not line and data:
+            event=json.loads('\n'.join(data));data=[]
+            kind=event.get('type')
+            if kind=='response.output_text.delta':parts.append(event.get('delta',''))
+            elif kind in {'error','response.failed','response.incomplete'}:
+                reason=event.get('response',{}).get('incomplete_details',{}).get('reason',kind)
+                raise ValueError('Ark returned an incomplete model response: '+str(reason))
+            elif kind=='response.completed':
+                result=event.get('response',{})
+                if result.get('status') not in {None,'completed'}:raise ValueError('Ark returned an incomplete model response')
+                return result if result.get('output') or result.get('output_text') else {**result,'output_text':''.join(parts)}
+    raise ValueError('Ark stream ended before completion')
+
+
+def request_json(api_key, model, system, payload, max_tokens=3000, timeout=90, endpoint=None, content=None, stream=False):
     user_content = content if content is not None else [{"type": "input_text", "text": json.dumps(payload, ensure_ascii=False)}]
     messages = [{"role": "system", "content": system}] if system else []
     messages.append({"role": "user", "content": user_content})
     body = {"model": model, "input": messages, "max_output_tokens": max_tokens,
             "thinking": {"type": "disabled"}, "text": {"format": {"type": "json_object"}}, "store": False}
+    if stream:body['stream']=True
     request = urllib.request.Request(endpoint or DEFAULT_ENDPOINT, data=json.dumps(body).encode("utf-8"),
                                      headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        raw = json.loads(response.read().decode("utf-8"))
+        raw = stream_response(response,timeout) if stream else json.loads(response.read().decode("utf-8"))
     text = response_text(raw)
     if text.startswith("```"):
         text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()

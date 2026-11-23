@@ -4,7 +4,7 @@ let characterError='',characterAttachPending=null,lastCreativeQuestion='';
 
 function renderCharacterReferences(state) {
   const spec=state.creative_spec,section=document.querySelector('#character-references');
-  section.hidden=!Boolean(spec.goal&&spec.shots?.length);
+  section.hidden=!Boolean(spec.goal&&spec.shots?.length)||['skill_preparation_required','skill_preparation_failed','planning_failed','awaiting_skill_clarification'].includes(state.status);
   if(section.hidden){clearTimeout(characterPollTimer);characterPollTimer=null;return;}
   const plan=spec.character_reference_plan||{},active=['planning_ready','awaiting_first_video','awaiting_repair_upload'].includes(state.status);
   if(!plan.id&&!active){section.hidden=true;return;}
@@ -55,7 +55,6 @@ function scheduleProductionDefaults(state) {
   productionDefaultsTimer=setTimeout(async()=>{
     try{await prepareCharacterReferences();}catch(_){/* Inline retry; never automatically repeat a failed planning request. */}
     try{await recommendCurrentVideoModel();}catch(error){document.querySelector('#settings-status').textContent=I18n.text(error.message);}
-    if(renderedState.creative_spec.enriched_context?.uploaded_skills?.length&&renderedState.creative_spec.character_reference_plan?.status!=='awaiting_clarification'){document.querySelector('#settings-status').textContent=I18n.text('Executing uploaded Skills…');try{render(await endpoint('/api/prepare-skill-prompt',{method:'POST',body:'{}'}));}catch(error){document.querySelector('#settings-status').textContent=I18n.text(error.message);try{render(await endpoint('/api/state'));}catch(_){}}}
   },0);
 }
 async function attachCharacterReferences() {

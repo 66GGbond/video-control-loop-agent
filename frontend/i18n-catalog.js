@@ -1,5 +1,6 @@
 // Interface copy only. User briefs and model prose are not machine-translated.
 window.I18N_CATALOG = [
+ ["Uploaded Skills applied","已执行上传的 Skill"],
  ["Executing uploaded Skills…","正在执行上传的 Skill…"],
  ["Skill execution and final video prompt","Skill 执行产物与最终视频提示词"], ["Skill preparation is incomplete. Video generation is blocked.","Skill 尚未准备完成，不会提交视频生成。"],
  ["Retry","重试"],

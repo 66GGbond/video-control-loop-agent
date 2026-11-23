@@ -68,6 +68,17 @@ def create_empty_state() -> ProjectState:
     return ProjectState(project_id=uuid.uuid4().hex, creative_spec=spec, current_version_id="none", status="ready_for_brief")
 
 
+def failed_planning_state(prompt, reference_asset, context, assets, error, status='planning_failed'):
+    from .skill_execution import failure_message
+    state=create_empty_state();spec=state.creative_spec
+    state.status=status;spec.goal=prompt;spec.source_prompt=prompt
+    spec.reference_asset=reference_asset;spec.multimodal_assets=assets or ([reference_asset] if reference_asset else [])
+    spec.enriched_context=context;spec.planning_source='incomplete'
+    spec.planning_notice=failure_message(error,context.get('ui_language','zh'))
+    context['planning_error']={'type':type(error).__name__,'message':spec.planning_notice}
+    return state
+
+
 def create_demo_state(
     prompt: str | None = None,
     reference_asset: dict | None = None,
@@ -172,8 +183,8 @@ def create_project_state(
     """Use the live planning tool when available, with a deterministic fallback."""
     def finish(state: ProjectState) -> ProjectState:
         context = enriched_context or {}
-        if state.creative_spec.enriched_context.get('creative_questions'):
-            context={**context,'creative_questions':state.creative_spec.enriched_context['creative_questions']}
+        for key in ('creative_questions','planning_basis_sha256'):
+            if state.creative_spec.enriched_context.get(key):context={**context,key:state.creative_spec.enriched_context[key]}
         state.creative_spec.enriched_context = context
         state.creative_spec.multimodal_assets = multimodal_assets or ([reference_asset] if reference_asset else [])
         state.creative_spec.asset_manifest = context.get("asset_manifest") or build_asset_manifest(state.creative_spec.multimodal_assets)
@@ -207,6 +218,8 @@ def create_project_state(
             spec = control_planner.plan(prompt, reference_asset, enriched_context)
             return finish(ProjectState(project_id=uuid.uuid4().hex, creative_spec=spec, current_version_id="none", status="planning_ready"))
         except (OSError, ValueError, KeyError, TypeError) as exc:
+            if (enriched_context or {}).get('uploaded_skills'):
+                return failed_planning_state(prompt,reference_asset,enriched_context,multimodal_assets,exc)
             fallback = create_demo_state(prompt, reference_asset, enriched_context, multimodal_assets)
             failure_kind = type(exc).__name__
             fallback.creative_spec.planning_notice = (
@@ -224,6 +237,8 @@ def create_project_state(
                 },
             })
             return finish(fallback)
+    if (enriched_context or {}).get('uploaded_skills'):
+        return failed_planning_state(prompt,reference_asset,enriched_context,multimodal_assets,ValueError('Planner unavailable'))
     fallback = create_demo_state(prompt, reference_asset, enriched_context, multimodal_assets)
     fallback.creative_spec.planning_notice = "A local recovery plan was built from the submitted brief because no live planning model is available to the local server."
     return finish(fallback)
@@ -238,12 +253,38 @@ def create_enriched_project_state(
     multimodal_assets: list[dict] | None = None,
     ui_language: str = "zh",
     uploaded_skills: list[dict] | None = None,
+    skill_checkpoint: dict | None = None,
+    prepared_basis: dict | None = None,
+    creative_answers: list[dict] | None = None,
 ) -> ProjectState:
     """Run the bounded pre-generation agent before compiling a control plan."""
+    from .skill_execution import prepare_brief,has_prepared_brief,clarify_failure
+    source_context={'uploaded_skills':uploaded_skills or [],'ui_language':'en' if ui_language=='en' else 'zh'}
+    source_context['creative_answers']=creative_answers or []
+    skill_history=[]
+    if uploaded_skills:
+        # No storyboard, recommendation or character job may precede this step.
+        provisional=create_empty_state();spec=provisional.creative_spec
+        spec.goal=prompt;spec.source_prompt=prompt;spec.reference_asset=reference_asset
+        spec.multimodal_assets=multimodal_assets or ([reference_asset] if reference_asset else [])
+        spec.asset_manifest=build_asset_manifest(spec.multimodal_assets)
+        spec.generation_spec=fallback_generation_spec(prompt,reference_asset)
+        spec.enriched_context=source_context
+        if skill_checkpoint:source_context['skill_execution']=skill_checkpoint
+        if prepared_basis:source_context['skill_brief']=prepared_basis
+        try:
+            if not has_prepared_brief(provisional):
+                source_context.pop('skill_brief',None)
+                prepare_brief(provisional)
+            skill_history=provisional.history
+        except (OSError,ValueError,KeyError,TypeError) as error:
+            failed=failed_planning_state(prompt,reference_asset,source_context,multimodal_assets,error,'skill_preparation_failed')
+            try:clarify_failure(failed)
+            except (OSError,ValueError,KeyError,TypeError):pass
+            return failed
     agent = context_agent or ContextEnrichmentAgent()
     context = agent.enrich(prompt, reference_asset, target_market, multimodal_assets)
-    context["uploaded_skills"] = uploaded_skills or []
-    context["ui_language"] = "en" if ui_language == "en" else "zh"
+    context.update(source_context)
     if context["status"] == "needs_user_confirmation":
         spec = CreativeSpec(
             goal=prompt,
@@ -260,6 +301,7 @@ def create_enriched_project_state(
         state = ProjectState(project_id=uuid.uuid4().hex, creative_spec=spec, current_version_id="none", status="awaiting_context_confirmation")
     else:
         state = create_project_state(prompt, reference_asset, control_planner, context, multimodal_assets)
+    state.history=[*skill_history,*state.history]
     for observation in context.get("tool_observations", []):
         state.history.append({
             "at": "local-demo",
