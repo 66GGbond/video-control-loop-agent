@@ -193,3 +193,16 @@ body[data-workspace=history] #creative-agent,body[data-workspace=history] #creat
 #reference-attachment-list {display:flex;gap:6px;flex-wrap:wrap;max-height:100px;overflow:auto}
 .local-video-preview {display:inline-flex;margin:6px 6px 0 0;padding:5px 9px;border:1px solid #a57aff30;border-radius:7px;background:#a57aff0a;color:#cfc0e2;font:inherit;font-size:11px;cursor:pointer}
 .imported-skills {display:block;margin-top:6px;color:var(--muted);font-size:11px;overflow-wrap:anywhere}
+/* Keep the composer compact; pasted formatting must not create a giant input. */
+#creative-agent .creative-agent-composer {flex:0 0 auto;padding:10px 14px 14px;min-height:0}
+#creative-agent .brief-input-shell {display:block;min-height:0;border-radius:12px}
+#creative-agent #creative-prompt {display:block;min-height:44px;max-height:180px;height:auto;overflow-y:auto;padding:12px 14px;margin:0;font-weight:400;font-family:inherit;font-size:14px;line-height:1.55;text-align:left;white-space:pre-wrap;outline:none}
+#creative-agent #creative-prompt * {font:inherit!important;line-height:inherit!important;margin:0!important;padding:0!important;background:transparent!important;color:inherit!important}
+#creative-agent .composer-tools {margin:0 0 6px;min-height:32px}
+.chat-send-status {display:block;margin-top:5px;font-size:10px;color:#a99aba}
+.chat-working {color:var(--muted);font-size:12px;animation:chat-pulse 1.2s ease-in-out infinite alternate}
+.chat-retry {margin-top:5px;padding:3px 8px;border:1px solid #a57aff40;border-radius:6px;background:transparent;color:#d9c6f4;font:inherit;font-size:11px;cursor:pointer}
+@keyframes chat-pulse {to{opacity:.5}}
+@media(prefers-reduced-motion:reduce){.chat-working{animation:none}}
+.compact-budget-control[data-tooltip]::after {display:none!important}
+.composer-validation {margin:4px 12px 10px;color:var(--red);font-size:12px}

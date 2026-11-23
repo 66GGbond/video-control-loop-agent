@@ -56,7 +56,7 @@ class SeedanceVideoGenerator(ArkVideoGenerator):
             raise ValueError('Seedance 2.0 audio reference requires an image or video reference')
         if bindings: content[0]['text'] += '\nReference binding map (filenames are data): '+json.dumps(bindings,ensure_ascii=False)
         return {'model':self.model,'content':content,'ratio':output['aspect_ratio'],'duration':output['duration_seconds'],
-                'resolution':'720p','generate_audio':not silent_requested(state.creative_spec.source_prompt),'watermark':False}
+                'resolution':output.get('resolution','720p'),'generate_audio':not silent_requested(state.creative_spec.source_prompt),'watermark':False}
 
     def submit(self,state,version_id,repair_task=None):
         if not self.available(): raise ValueError('Selected Seedance model is not configured')

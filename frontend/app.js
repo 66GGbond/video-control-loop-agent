@@ -71,22 +71,7 @@ function hideDurationValidationPopover() {
 
 function showDurationValidationPopover(marker) {
   hideDurationValidationPopover();
-  if (!marker) return;
-  const rect = marker.getBoundingClientRect();
-  const popover = document.createElement("div");
-  popover.id = "duration-validation-popover";
-  popover.className = "duration-validation-popover";
-  popover.setAttribute("role", "alert");
-  popover.innerHTML = `<span>单条视频最长 ${MAX_VIDEO_DURATION_SECONDS} 秒，请修改此时长。</span><button type="button" aria-label="关闭时长提示">×</button>`;
-  document.body.append(popover);
-  const popoverRect = popover.getBoundingClientRect();
-  const left = Math.max(12, Math.min(rect.left, window.innerWidth - popoverRect.width - 12));
-  const top = rect.bottom + popoverRect.height + 12 > window.innerHeight
-    ? Math.max(12, rect.top - popoverRect.height - 10)
-    : rect.bottom + 10;
-  popover.style.left = `${left}px`;
-  popover.style.top = `${top}px`;
-  popover.querySelector("button").addEventListener("click", hideDurationValidationPopover);
+  const hint=document.createElement('p');hint.id='duration-validation-popover';hint.className='composer-validation';hint.setAttribute('role','alert');hint.textContent=I18n.text('Each video can be at most 30 seconds.');promptEditor().parentElement.append(hint);
 }
 
 function highlightOverLimitDurations() {
@@ -804,9 +789,28 @@ function renderExecutionTrace(state) {
 }
 
 let renderedConversation = "";
+let chatOutbox=[];
+function paintOutbox(state,log){
+  for(const item of chatOutbox){
+    if((state.conversation||[]).slice(item.base).some(m=>m.role==='user'&&m.text.trim()===item.text.trim()))continue;
+    const bubble=document.createElement('article');bubble.className='agent-message agent-message-user';bubble.dataset.messageId=item.id;
+    const text=document.createElement('p');text.textContent=item.text;text.translate=false;bubble.append(text);
+    const status=document.createElement('small');status.className='chat-send-status';status.textContent=I18n.text(item.failed?'Not sent':'Sending…');bubble.append(status);
+    if(item.failed){const retry=document.createElement('button');retry.type='button';retry.className='chat-retry';retry.textContent=I18n.text('Retry');retry.addEventListener('click',async()=>{
+      if(document.querySelector('#create-plan').disabled)return;
+      retry.disabled=true;
+      try{const latest=await endpoint('/api/state');render(latest);
+        if((latest.conversation||[]).slice(item.base).some(m=>m.role==='user'&&m.text.trim()===item.text.trim())){chatOutbox=chatOutbox.filter(m=>m!==item);renderConversation(latest);return;}
+        await submitChat({preventDefault(){},currentTarget:document.querySelector('#project-form'),retry:item});
+      }catch(_){retry.disabled=false;}
+    });bubble.append(retry);}
+    log.append(bubble);
+    if(!item.failed){const working=document.createElement('article');working.className='agent-message agent-message-system chat-working';working.setAttribute('role','status');working.textContent=I18n.text('Agent is thinking…');log.append(working);}
+  }
+}
 function renderConversation(state) {
   const log=document.querySelector("#agent-conversation"), feed=document.querySelector("#creative-agent-feed");
-  const messages=state.conversation || [], signature=I18n.language+state.status+state.execution_mode+state.autopilot_paused+JSON.stringify(messages);
+  const messages=state.conversation || [], signature=I18n.language+state.status+state.execution_mode+state.autopilot_paused+JSON.stringify(messages)+JSON.stringify(chatOutbox.map(m=>[m.id,m.failed]));
   if(signature===renderedConversation)return;
   const follow=feed.scrollHeight-feed.scrollTop-feed.clientHeight<48, scroll=feed.scrollTop;
   const first=renderedConversation==="";
@@ -825,7 +829,8 @@ function renderConversation(state) {
   }
   const progress={generating_video:'视频正在生成，完成后会在主界面展示。',ready_for_evaluation:'视频已生成，是否开始质检？',repair_uploaded:'修复版本已就绪，是否开始质检？',awaiting_repair_upload:'修复方案已整理好，是否生成修复版本？'}[state.status];
   if(progress&&!autopilotIsRunning(state)){const item=document.createElement('article');item.className='agent-message agent-message-system';const text=document.createElement('p');text.textContent=I18n.text(progress);item.append(text);log.append(item);}
-  log.hidden=!messages.length&&!progress;
+  paintOutbox(state,log);
+  log.hidden=!messages.length&&!progress&&!chatOutbox.length;
   requestAnimationFrame(()=>{feed.scrollTop=follow||first?feed.scrollHeight:scroll;});
 }
 
@@ -1261,7 +1266,6 @@ function render(state) {
   const hasPlan = Boolean(spec.goal && spec.shots.length);
   const enrichedContext = spec.enriched_context || {};
   const promptInput = document.querySelector("#creative-prompt");
-  if (state.status === "ready_for_brief" && document.activeElement !== promptInput) setEditorText("");
   renderProjectStatus(state);
   renderCreativeAgent(state, spec, enrichedContext);
 
@@ -1310,7 +1314,7 @@ function render(state) {
   budgetControl.title = state.status === "stopped_budget_exhausted"
     ? `修复预算已耗尽：当前为 ${budget} 轮。增加次数即可授权 Agent 继续修复。`
     : `修复预算：当前最多 ${budget} 轮。调整预算会暂停 Agent 自主代理，等待你开启 Agent 自主代理继续。`;
-  budgetControl.dataset.tooltip = budgetControl.title;
+  budgetControl.removeAttribute("title");delete budgetControl.dataset.tooltip;
   budgetDecrease.disabled = !canAdjustBudget || budget <= state.iterations_used;
   budgetIncrease.disabled = !canAdjustBudget || budget >= 5;
   const videoStage = document.querySelector("#agent-video-action");
@@ -1482,9 +1486,9 @@ async function readLocalVideo(file){
   const duration=await new Promise((resolve,reject)=>{const video=document.createElement('video');const url=URL.createObjectURL(file);video.preload='metadata';video.onloadedmetadata=()=>{URL.revokeObjectURL(url);resolve(video.duration);};video.onerror=()=>{URL.revokeObjectURL(url);reject(new Error('无法读取视频，请使用 MP4/MOV 文件。'));};video.src=url;});
   return {name:file.name,mime_type:file.type||'video/mp4',data_url:data,duration_seconds:duration,size:file.size,local_only:true};
 }
-async function serializeImports(prompt){
-  const skill_files=await Promise.all(selectedReferenceItems.filter(isSkillReference).map(async file=>({path:file.webkitRelativePath||file.name,text:await file.text()})));
-  const multimodal_assets=await Promise.all(selectedReferenceItems.filter(f=>!isSkillReference(f)).map(async(file,index)=>{
+async function serializeImports(prompt,files=selectedReferenceItems){
+  const skill_files=await Promise.all(files.filter(isSkillReference).map(async file=>({path:file.webkitRelativePath||file.name,text:await file.text()})));
+  const multimodal_assets=await Promise.all(files.filter(f=>!isSkillReference(f)).map(async(file,index)=>{
     const asset=isImageReference(file)?await readReferenceFile(file):isVideoReference(file)?await readLocalVideo(file):await readAudioReferenceFile(file);
     return {...asset,role:isImageReference(file)?'Visual reference':isVideoReference(file)?'reference_video':'Audio reference',input_order:index+1,prompt_mentions:promptMentionsFor(file,prompt)};
   }));return {skill_files,multimodal_assets};
@@ -1514,11 +1518,11 @@ document.querySelector("#creative-prompt").addEventListener("keydown", event => 
 });
 document.querySelector("#creative-prompt").addEventListener("click", updateMentionMenu);
 document.querySelector("#creative-prompt").addEventListener("blur", () => window.setTimeout(hideMentionMenu, 120));
-document.querySelector("#project-form").addEventListener("submit", async event => {
+async function submitChat(event) {
   event.preventDefault();
-  const prompt = editorText().trim();
+  const prompt = event.retry?.text||editorText().trim();
   const submit = event.currentTarget.querySelector("button[type=submit]");
-  if (!prompt) return;
+  if (!prompt || submit.disabled || !renderedState) return;
   const invalidDurations = overLimitDurations(prompt);
   if (invalidDurations.length) {
     const marker = highlightOverLimitDurations();
@@ -1531,14 +1535,21 @@ document.querySelector("#project-form").addEventListener("submit", async event =
   const isInitialBrief = renderedState?.status === "ready_for_brief";
   submit.disabled = true;
   submit.textContent = isInitialBrief ? "Analyzing brief…" : "Updating Agent…";
+  const files=event.retry?.files||[...selectedReferenceItems];
+  const outgoing=event.retry||{id:crypto.randomUUID(),text:prompt,files,base:renderedState?.conversation?.length||0};
+  outgoing.failed=false;if(!event.retry)chatOutbox.push(outgoing);
+  if(!event.retry){setEditorText('');clearReferenceAttachments();}
+  renderConversation(renderedState);
+  const feed=document.querySelector('#creative-agent-feed');feed.scrollTop=feed.scrollHeight;
+  let accepted=false;
   try {
-    if(!isInitialBrief&&selectedReferenceItems.length)render(await endpoint('/api/import-references',{method:'POST',body:JSON.stringify(await serializeImports(prompt))}));
+    if(!isInitialBrief&&files.length&&!outgoing.imported){render(await endpoint('/api/import-references',{method:'POST',body:JSON.stringify(await serializeImports(prompt,files))}));outgoing.imported=true;}
     if (isInitialBrief) {
       // Promise.all preserves the order of this array.  It is deliberately
       // built from the visual attachment strip rather than from media-type
       // buckets, so `image → audio → image` remains that exact order all the
       // way into the provider request.
-      const imports=await serializeImports(prompt);
+      const imports=await serializeImports(prompt,files);
       render(await endpoint('/api/create-project',{method:'POST',body:JSON.stringify({prompt,...imports,language:I18n.language})}));
     } else if(renderedState.status==='generated_video_ready'&&/^(重试|继续|重新准备|重试证据|retry)[。！!,.\s]*$/i.test(prompt)){
       await prepareGeneratedEvidence(renderedState);
@@ -1553,17 +1564,19 @@ document.querySelector("#project-form").addEventListener("submit", async event =
     } else {
       render(await endpoint("/api/revise-brief", { method: "POST", body: JSON.stringify({ instruction: prompt, language:I18n.language }) }));
     }
-    setEditorText("");
-    clearReferenceAttachments();
+    accepted=true;
     if(autopilotIsRunning(renderedState))await advanceAutopilot(renderedState);
     if (["planning_ready", "awaiting_first_video", "awaiting_repair_upload"].includes(renderedState.status)) await recommendCurrentVideoModel();
   } catch (error) {
-    I18n.alert(error.message);
+    outgoing.failed=true;
   } finally {
+    if(accepted)chatOutbox=chatOutbox.filter(item=>item!==outgoing);
+    renderConversation(renderedState);
     submit.disabled = false;
     submit.textContent = renderedState?.status === "ready_for_brief" ? "Generate control plan" : "Send update";
   }
-});
+}
+document.querySelector("#project-form").addEventListener("submit",submitChat);
 document.querySelector("#confirm-context").addEventListener("click", async () => {
   const button = document.querySelector("#confirm-context");
   const market = document.querySelector("#target-market").value.trim();

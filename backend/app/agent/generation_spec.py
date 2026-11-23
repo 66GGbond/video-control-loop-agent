@@ -32,7 +32,10 @@ def validate_generation_spec(value: Any) -> Dict[str, Any]:
         raise ValueError("generation_spec.quality_target must be standard or high")
     if not isinstance(rationale, str) or not rationale.strip():
         raise ValueError("generation_spec.rationale must be non-empty text")
+    resolution=value.get('resolution')
+    if resolution is not None and resolution not in {'480p','720p','1080p','768P','1080P'}:raise ValueError('不支持此清晰度。')
     return {
+        **({'resolution':resolution} if resolution else {}),
         "duration_seconds": duration,
         "aspect_ratio": ratio,
         "quality_target": quality,

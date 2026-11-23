@@ -30,6 +30,15 @@ class ModelRouterTests(unittest.TestCase):
         confirm(self.state,model,choice['fingerprint'])
         return choice
 
+    def test_resolution_setting_reaches_seedance_payload_and_rejects_invalid(self):
+        from backend.app.generation_settings import configure
+        with patch('backend.app.agent.model_router.request_json',return_value={'recommended_model':SEEDANCE_25,'reason':'quality'}):
+            configure(self.state,{'resolution':'1080p'})
+        self.assertEqual(self.state.creative_spec.generation_spec['resolution'],'1080p')
+        self.assertEqual(SeedanceVideoGenerator(SEEDANCE_25,api_key='key')._request_body(self.state)['resolution'],'1080p')
+        with self.assertRaises(ValueError):configure(self.state,{'resolution':'8K'})
+        self.assertEqual(self.state.creative_spec.generation_spec['resolution'],'1080p')
+
     def test_h3_is_excluded_without_explicit_cost_priority(self):
         cards={c['model_id']:c for c in candidate_cards(self.state)}
         self.assertTrue(cards[SEEDANCE_25]['eligible']);self.assertTrue(cards[SEEDANCE_20]['eligible'])

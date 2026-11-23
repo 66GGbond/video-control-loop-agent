@@ -16,12 +16,15 @@ function renderModelSelection(state) {
   const output=spec.generation_spec||{};
   document.querySelector('#video-ratio').value=output.aspect_ratio||'16:9';
   document.querySelector('#video-duration').value=output.duration_seconds||4;
-  document.querySelector('#video-quality').value=output.quality_target||'standard';
   const active=['planning_ready','awaiting_first_video','awaiting_repair_upload'].includes(state.status);
   panel.querySelectorAll('input,select').forEach(el=>el.disabled=!active||Boolean(generationSettingsPending)||Boolean(modelRecommendationPending));
   select.disabled=select.disabled||!eligible.length;
   const card=(choice.candidates||[]).find(c=>c.model_id===select.value);
-  document.querySelector('#video-resolution').textContent=card?.resolution||'—';
+  const resolution=document.querySelector('#video-resolution');
+  resolution.replaceChildren(...(card?.resolutions||['480p','720p','1080p']).map(value=>new Option(value,value)));
+  resolution.value=output.resolution||card?.resolution||'720p';
+  if(!resolution.value)resolution.value=resolution.options[0]?.value||'';
+
   const warnings=card?.warnings||[];
   const notice=document.querySelector('#model-warning');notice.hidden=!warnings.length;
   notice.title=warnings.map(text=>I18n.text(text)).join('\n');notice.setAttribute('aria-label',notice.title||I18n.text('Model constraints'));
@@ -40,12 +43,12 @@ async function saveGenerationSettings(modelChanged=false) {
   if(!choice?.recommended_model)await recommendCurrentVideoModel();
   const payload={model_changed:modelChanged,model_id:document.querySelector('#video-model-select').value,
     aspect_ratio:document.querySelector('#video-ratio').value,duration_seconds:Number(document.querySelector('#video-duration').value),
-    quality_target:document.querySelector('#video-quality').value};
+    resolution:document.querySelector('#video-resolution').value};
   generationSettingsPending=endpoint('/api/configure-generation',{method:'POST',body:JSON.stringify(payload)}).then(state=>{render(state);return state;}).finally(()=>{
     generationSettingsPending=null;if(renderedState)renderModelSelection(renderedState);
   });renderModelSelection(renderedState);return generationSettingsPending;
 }
-for(const id of ['video-model-select','video-ratio','video-duration','video-quality'])document.querySelector('#'+id).addEventListener('change',async()=>{
+for(const id of ['video-model-select','video-ratio','video-duration','video-resolution'])document.querySelector('#'+id).addEventListener('change',async()=>{
   try{await saveGenerationSettings(id==='video-model-select');}catch(error){renderModelSelection(renderedState);I18n.alert(error.message);}
 });
 window.addEventListener('languagechange',()=>{if(renderedState)renderModelSelection(renderedState);});
