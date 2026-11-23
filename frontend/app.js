@@ -1258,6 +1258,7 @@ function renderReferenceMedia(spec) {
 
 function render(state) {
   renderedState = state;
+  if(state.conversation_only){renderCreativeAgent(state,state.creative_spec,state.creative_spec.enriched_context||{});return;}
   const execution=state.creative_spec.enriched_context?.skill_execution||state.creative_spec.enriched_context?.skill_brief;
   const skillResult=document.querySelector('#skill-execution-result');skillResult.hidden=!execution;
   document.querySelector('#skill-execution-copy').textContent=execution?.status==='verified'?((execution.execution_steps||[]).map(s=>s.step+'\n'+s.result).join('\n\n')+'\n\n'+(execution.conflicts||[]).join('\n')+'\n\n'+execution.optimized_prompt):I18n.text('Skill preparation is incomplete. Video generation is blocked.');
@@ -1573,8 +1574,8 @@ async function submitChat(event) {
       render(await endpoint("/api/revise-brief", { method: "POST", body: JSON.stringify({ instruction: prompt, language:I18n.language }) }));
     }
     accepted=true;
-    if(autopilotIsRunning(renderedState))await advanceAutopilot(renderedState);
-    if (["planning_ready", "awaiting_first_video", "awaiting_repair_upload"].includes(renderedState.status)) await recommendCurrentVideoModel();
+    if(!renderedState.conversation_only&&autopilotIsRunning(renderedState))await advanceAutopilot(renderedState);
+    if (!renderedState.conversation_only&&["planning_ready", "awaiting_first_video", "awaiting_repair_upload"].includes(renderedState.status)) await recommendCurrentVideoModel();
   } catch (error) {
     outgoing.failed=true;
   } finally {

@@ -28,6 +28,7 @@ from .skill_execution import prepare as prepare_skill_prompt
 from .skill_execution import PREPARATION_STATES, has_prepared_brief, require_prepared_brief, clarify_failure
 from .reference_imports import skill_files
 from .conversation import record_exchange
+from .chat_turns import respond as respond_to_question,recover_editing_question
 from .agent.planner import ArkControlPlanner
 from .agent.context import ContextEnrichmentAgent
 from .agent.generation_spec import validate_brief_duration
@@ -169,6 +170,7 @@ def visitor_request(method):
         lock = VISITOR_LOCKS[int(hashlib.sha256(self.visitor_id.encode()).hexdigest(), 16) % len(VISITOR_LOCKS)]
         with lock:
             self.state = SESSIONS.load(self.visitor_id) or create_empty_state()
+            if self.command=='GET' and path=='/api/state':recover_editing_question(self.state)
             if self.state.status in {'planning_ready','awaiting_first_video','awaiting_context_confirmation'} and not characters.running(self.state,SESSIONS,self.visitor_id):
                 require_prepared_brief(self.state)
             if urlparse("http://" + self.headers.get("Host", "")).hostname not in {"localhost", "127.0.0.1", "::1"}:
@@ -403,6 +405,8 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "There is no pending context question for this project"})
                 payload = self._read_json()
                 target_market = str(payload.get("target_market", "")).strip()
+                if respond_to_question(self.state,target_market,payload.get('language',self.state.creative_spec.enriched_context.get('ui_language','zh'))):
+                    return self._json(200,{**present(self.state),'conversation_only':True})
                 if not target_market:
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "A target market or region is required for this seasonal request"})
                 original = self.state
@@ -489,6 +493,8 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     raise ValueError('当前没有待恢复的创作规划。')
                 if not instruction:
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "Enter a revision before sending it to the Agent"})
+                if path=='/api/revise-brief' and respond_to_question(self.state,instruction,payload.get('language',self.state.creative_spec.enriched_context.get('ui_language','zh'))):
+                    return self._json(200,{**present(self.state),'conversation_only':True})
                 if self.state.status in PREPARATION_STATES:
                     import re
                     original=self.state;spec=original.creative_spec;context=spec.enriched_context
