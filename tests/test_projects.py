@@ -1,4 +1,6 @@
 import base64
+import hashlib
+import http.client
 import json
 import os
 import sqlite3
@@ -145,6 +147,33 @@ class ProjectHTTPTests(unittest.TestCase):
     cleanup=local.LocalServerTests.cleanup
     request=local.LocalServerTests.request
     session=local.LocalServerTests.session
+
+    def test_history_and_previews_remain_readable_during_a_locked_model_request(self):
+        visitor=self.session();state=create_demo_state('历史中的项目')
+        state.current_video_asset={'poster_data_url':DATA}
+        self.store.save(visitor,state)
+        lock=local.server.VISITOR_LOCKS[int(hashlib.sha256(visitor.encode()).hexdigest(),16)%len(local.server.VISITOR_LOCKS)]
+        # A slow planner/Skill holds this same lock on its request thread.
+        # History must use the committed archive without waiting or saving state.
+        with lock,patch.object(self.store,'save',side_effect=AssertionError('History must be read-only')):
+            for path in ['/api/projects','/api/project-preview/'+state.project_id]:
+                conn=http.client.HTTPConnection('127.0.0.1',self.http.server_port,timeout=1)
+                try:
+                    conn.request('GET',path,headers={'Cookie':self.cookie})
+                    response=conn.getresponse();body=response.read()
+                    self.assertEqual(response.status,200)
+                    if path=='/api/projects':self.assertEqual(json.loads(body)['projects'][0]['id'],state.project_id)
+                    else:self.assertEqual(body,PNG)
+                finally:conn.close()
+        self.assertEqual(self.store.load(visitor).project_id,state.project_id)
+
+    def test_nonblocking_history_still_checks_host_and_owner(self):
+        visitor=self.session();state=create_demo_state('私有项目')
+        self.store.save(visitor,state)
+        self.assertEqual(self.request('/api/projects',headers={'Host':'untrusted.example'})[0],403)
+        self.cookie=''
+        self.assertEqual(self.request('/api/projects')[1]['projects'],[])
+        self.assertEqual(self.request('/api/project-preview/'+state.project_id)[0],404)
 
     def test_reset_archives_and_open_restores_project_with_rename(self):
         state=create_demo_state('校园故事');state.current_video_asset={'poster_data_url':DATA}

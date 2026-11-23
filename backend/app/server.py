@@ -159,6 +159,12 @@ def visitor_request(method):
         except Exception:
             pass
         self.visitor_id, self.visitor_cookie = SESSIONS.visitor(cookie["agent_session"].value if "agent_session" in cookie else cookie["trial_visitor"].value if "trial_visitor" in cookie else "")
+        path = urlparse(self.path).path
+        # Archives are committed snapshots. Reading them must not wait for a
+        # planning/provider request, or save an older active state over its work.
+        self.read_only_archive = self.command == 'GET' and (path == '/api/projects' or path.startswith('/api/project-preview/'))
+        if self.read_only_archive and urlparse("http://" + self.headers.get("Host", "")).hostname in {"localhost", "127.0.0.1", "::1"}:
+            return method(self)
         lock = VISITOR_LOCKS[int(hashlib.sha256(self.visitor_id.encode()).hexdigest(), 16) % len(VISITOR_LOCKS)]
         with lock:
             self.state = SESSIONS.load(self.visitor_id) or create_empty_state()
@@ -844,7 +850,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
         self.state.execution_mode='autopilot';self.state.autopilot_paused=False
 
     def _json(self, status: HTTPStatus, data: dict):
-        if hasattr(self, "visitor_id"):
+        if hasattr(self, "visitor_id") and not getattr(self, 'read_only_archive', False):
             SESSIONS.save(self.visitor_id, self.state)
             if data.get('project_id') == self.state.project_id and 'creative_spec' in data:
                 with SESSIONS.connect() as db:

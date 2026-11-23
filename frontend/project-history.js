@@ -23,7 +23,7 @@ window.ProjectHistory=(()=>{
       rename.addEventListener('click',()=>renameProject(project,card,title));
       const type=document.createElement('span');type.className='history-project-type';type.textContent=project.kind==='canvas'?I18n.text('Canvas project'):'VCLA Agent';footer.append(type,date,rename);card.append(open,footer);grid.append(card);
     }
-    message(projects.length?'':'No saved projects yet');
+    message(grid.childElementCount?'':'No saved projects yet');
   }
   function renameProject(project,card,title){
     if(editing)return;
@@ -50,6 +50,8 @@ window.ProjectHistory=(()=>{
   }
   async function load(){
     if(loading)return;loading=true;clearTimeout(poll);
+    if(!projects.length)message(I18n.language==='zh'?'正在加载历史项目…':'Loading project history…');
+    grid.setAttribute('aria-busy','true');
     try{
       const data=await endpoint('/api/projects');projects=data.projects;renderCards();
       if(projects.some(p=>p.title_source==='pending')&&!naming){
@@ -58,7 +60,10 @@ window.ProjectHistory=(()=>{
         finally{naming=false;}
       }
       if(projects.some(p=>['pending','naming'].includes(p.title_source))&&document.body.dataset.workspace==='history')poll=setTimeout(load,1500);
-    }catch(error){message(error.message);}finally{loading=false;}
+    }catch(error){
+      message(I18n.language==='zh'?'历史项目暂时加载失败，正在重试；已保存的项目不会被删除。':'Project history could not load. Retrying; saved projects are retained.');
+      if(document.body.dataset.workspace==='history')poll=setTimeout(load,3000);
+    }finally{loading=false;grid.setAttribute('aria-busy','false');}
   }
   document.querySelector('#history-new-project').addEventListener('click',()=>window.openNewProject('vcl',true));
   document.querySelectorAll('[data-project-type]').forEach(button=>button.addEventListener('click',()=>{typeFilter=button.dataset.projectType;document.querySelectorAll('[data-project-type]').forEach(tab=>tab.setAttribute('aria-selected',String(tab===button)));renderCards();}));

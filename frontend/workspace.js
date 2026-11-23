@@ -43,10 +43,6 @@
   async function workspace(name,remember=true) {
     name=['canvas','history'].includes(name)?name:'vcl';
     if(name==='history') {
-      try{await window.CanvasImages.flush();}catch(error){notify(error.message);return;}
-      if(window.VCLBridge.state()?.execution_mode==='autopilot'&&!window.VCLBridge.state().autopilot_paused) {
-        try{render(await endpoint('/api/autopilot',{method:'POST',body:JSON.stringify({action:'pause'})}));}catch(error){notify(error.message);return;}
-      }
       setCreativeAgentOpen(false);
     }
     document.body.dataset.workspace=name;
@@ -59,7 +55,18 @@
     if(remember){history.replaceState(null,'','#'+name);}
 
     if(name==='vcl'&&window.VCLBridge.state())scheduleProductionDefaults(window.VCLBridge.state());
-    if(name==='history')window.ProjectHistory.load();
+    if(name==='history'){
+      window.ProjectHistory.load();
+      // Browsing snapshots does not switch projects. Saving and pausing may
+      // finish in the background; opening a card still flushes the draft.
+      window.CanvasImages.flush()?.catch(error=>notify(error.message));
+      const state=window.VCLBridge.state();
+      if(state?.execution_mode==='autopilot'&&!state.autopilot_paused){
+        endpoint('/api/autopilot',{method:'POST',body:JSON.stringify({action:'pause'})})
+          .then(data=>{if(window.VCLBridge.state()?.project_id===data.project_id)render(data);})
+          .catch(error=>notify(error.message));
+      }
+    }
     if(name==='canvas')try {await load();stage.focus({preventScroll:true});}catch(error){notify(error.message);}
   }
   document.querySelectorAll('.nav-page').forEach(button=>button.addEventListener('click',()=>workspace(button.dataset.workspace)));
