@@ -1476,7 +1476,6 @@ function importReferenceFiles(event) {
   if (rejected.length) I18n.alert(rejected.join("\n"));
 }
 document.querySelector('#reference-media').addEventListener('change',importReferenceFiles);
-document.querySelector('#reference-folder').addEventListener('change',importReferenceFiles);
 async function readLocalVideo(file){
   if(file.reference_url)return {name:file.name,mime_type:file.type,url:file.reference_url,duration_seconds:file.duration_seconds,size:0};
   const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=reject;reader.readAsDataURL(file);});
