@@ -70,7 +70,7 @@ def validate_evidence_sampling_policy(
     allowed = allowed_shot_ids or {f"S{index}" for index in range(1, MAX_BEATS + 1)}
     if not allowed:
         raise ValueError(f"{field} needs at least one allowed storyboard beat")
-    maximum = min(3, len(allowed))
+    maximum = len(allowed)
     raw_focus = value.get("focus_shot_ids")
     if not isinstance(raw_focus, list) or not 1 <= len(raw_focus) <= maximum:
         raise ValueError(f"{field}.focus_shot_ids must contain 1 to {maximum} shot IDs")
@@ -87,7 +87,7 @@ def validate_evidence_sampling_policy(
         if not isinstance(item, dict):
             raise ValueError(f"{field}.critical_moments items must be objects")
         shot_id, reason = item.get("shot_id"), item.get("reason")
-        if shot_id not in focus or not isinstance(reason, str) or not reason.strip() or len(reason.strip()) > 180:
+        if shot_id not in focus or not isinstance(reason, str) or not reason.strip():
             raise ValueError(f"{field}.critical_moments contains invalid data")
         moment: Dict[str, Any] = {"shot_id": shot_id, "reason": reason.strip()}
         if item.get("time_range_seconds") is not None:
@@ -100,7 +100,7 @@ def validate_evidence_sampling_policy(
             moment["time_range_seconds"] = [start, end]
         moments.append(moment)
     rationale = value.get("rationale")
-    if not isinstance(rationale, str) or not rationale.strip() or len(rationale.strip()) > 240:
+    if not isinstance(rationale, str) or not rationale.strip():
         raise ValueError(f"{field}.rationale must be concise text")
     result: Dict[str, Any] = {"focus_shot_ids": focus, "critical_moments": moments, "rationale": rationale.strip(), "source": "doubao_seed_2_1_pro"}
     raw_windows = value.get("shot_windows")

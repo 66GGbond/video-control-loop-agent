@@ -1,4 +1,4 @@
-/* The toolbar always identifies the active VCL project, independently of canvas. */
+/* The toolbar identifies the active project. */
 (() => {
   const name=document.querySelector('#active-project-name'), form=document.querySelector('#project-name-form');
   const edit=document.querySelector('#edit-project-name'), picker=document.querySelector('#project-picker');
@@ -65,7 +65,6 @@
     if(id===state?.project_id){closePicker(true);return;}
     picker.disabled=true;error('');
     try{
-      await window.CanvasImages.flush();
       const result=await endpoint('/api/projects/open',{method:'POST',body:JSON.stringify({project_id:id})});
       location.assign('/?project='+encodeURIComponent(result.project_id)+'&opened='+Date.now()+'#vcl');
     }catch(e){error(e.message);picker.disabled=false;}

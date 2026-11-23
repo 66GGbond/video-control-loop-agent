@@ -180,21 +180,8 @@ class ContextEnrichmentAgent:
         }
 
     def _suggest_tools(self, prompt: str, has_reference: bool, has_market: bool) -> list[dict[str, str]]:
-        fallback = self._fallback_suggestion(prompt, has_reference)
-        if not self.api_key:
-            return fallback
-        system = """You are the context-planning module of an AI video agent. Return JSON only.
-Choose zero or more registered tools that would materially improve generation controllability:
-calendar_context, reference_asset_analysis, capability_router, short_form_pattern_library.
-Do not claim live trend data. If seasonal or holiday context is central and market is missing, set needs_target_market=true.
-Schema: {"tool_requests":[{"tool":"registered name","reason":"short reason"}],"needs_target_market":true|false}."""
-        try:
-            parsed = self._request_json(system, {"creative_brief": prompt, "has_reference_asset": has_reference, "has_target_market": has_market})
-            raw = parsed.get("tool_requests", []) if isinstance(parsed, dict) else []
-            requests = [item for item in raw if isinstance(item, dict) and item.get("tool") in self.allowed_tools]
-            return requests or fallback
-        except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
-            return fallback
+        # Metadata tools are local; selecting them does not need another LLM round trip.
+        return self._fallback_suggestion(prompt, has_reference)
 
     @staticmethod
     def _fallback_suggestion(prompt: str, has_reference: bool) -> list[dict[str, str]]:

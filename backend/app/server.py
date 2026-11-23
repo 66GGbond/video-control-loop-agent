@@ -24,8 +24,7 @@ from urllib import request as urllib_request
 
 from .sessions import SessionStore
 from .agent.context import requires_market_confirmation
-from .skill_execution import prepare as prepare_skill_prompt
-from .skill_execution import PREPARATION_STATES, has_prepared_brief, require_prepared_brief, clarify_failure
+from .skill_execution import PREPARATION_STATES
 from .reference_imports import skill_files
 from .conversation import record_exchange
 from .chat_turns import respond as respond_to_question,recover_editing_question,decide as decide_chat_turn,record_reply,reconcile_last_answer,failure_reply,recover_last_command
@@ -174,8 +173,6 @@ def visitor_request(method):
         with lock:
             self.state = SESSIONS.load(self.visitor_id) or create_empty_state()
             if self.command=='GET' and path=='/api/state':recover_editing_question(self.state)
-            if self.state.status in {'planning_ready','awaiting_first_video','awaiting_context_confirmation'} and not characters.running(self.state,SESSIONS,self.visitor_id):
-                require_prepared_brief(self.state)
             if urlparse("http://" + self.headers.get("Host", "")).hostname not in {"localhost", "127.0.0.1", "::1"}:
                 return self._json(403, {"error": "This application is available locally only."})
             # Same-origin JSON requests only; reject cross-site form/fetch submissions.
@@ -186,11 +183,7 @@ def visitor_request(method):
                 if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
                     return self._json(415, {"error": "请使用 JSON 请求。"})
             expected = self.headers.get('X-Project-ID')
-            canvas_path=urlparse(self.path).path in {'/api/canvas','/api/new-canvas','/api/recommend-image-model','/api/generate-image','/api/image-results'} or urlparse(self.path).path.startswith('/api/image-task/')
-            expected_canvas=self.headers.get('X-Canvas-ID')
-            if canvas_path and expected_canvas and expected_canvas!=SESSIONS.canvas_project(self.visitor_id):
-                return self._json(HTTPStatus.CONFLICT,{'error':'画布项目已切换，请刷新后继续。'})
-            if not canvas_path and expected and expected != self.state.project_id and urlparse(self.path).path not in {'/api/projects','/api/projects/open','/api/projects/rename','/api/project-titles'}:
+            if expected and expected != self.state.project_id and path not in {'/api/projects','/api/projects/open','/api/projects/rename','/api/project-titles'}:
                 return self._json(HTTPStatus.CONFLICT, {'error': '当前项目已在其他页面切换，请刷新后继续。'})
             SESSIONS.save(self.visitor_id, self.state)
             try:
@@ -238,21 +231,6 @@ class DemoHandler(SimpleHTTPRequestHandler):
         if path == "/api/character-references":
             characters.sync(self.state, SESSIONS, self.visitor_id)
             return self._json(HTTPStatus.OK, present(self.state))
-        if path == "/api/canvas":
-            return self._json(HTTPStatus.OK, SESSIONS.load_canvas(self.visitor_id))
-        if path.startswith('/api/image-task/'):
-            return self._json(HTTPStatus.OK, ImageTasks(SESSIONS,SESSIONS.canvas_project(self.visitor_id)).get(self.visitor_id,path.rsplit('/',1)[-1]))
-        if path == '/api/image-results':
-            with SESSIONS.connect() as db:
-                tasks=db.execute('SELECT node_id,data FROM image_tasks WHERE visitor_id=?',(self.visitor_id,)).fetchall()
-                ids={r[0] for r in db.execute('SELECT id FROM image_outputs WHERE visitor_id=?',(self.visitor_id,))}
-            character_tasks={p.get('task_id') for p in self.state.creative_spec.character_reference_plan.get('characters',[])}
-            results=[]
-            for row in reversed(tasks):
-                job=json.loads(row['data']);run=job.get('run_id')
-                if (row['node_id'].startswith(SESSIONS.canvas_project(self.visitor_id)+':') or row['node_id'] in character_tasks) and run in ids and job.get('status')=='succeeded':
-                    results.append({'run_id':run,'name':'Seedream '+run[:8]})
-            return self._json(HTTPStatus.OK, {'results':results})
         if path.startswith('/api/image-output/'):
             result=ImageTasks(SESSIONS).output(self.visitor_id,path.rsplit('/',1)[-1])
             if not result:return self._json(HTTPStatus.NOT_FOUND,{'error':'Image unavailable'})
@@ -275,6 +253,13 @@ class DemoHandler(SimpleHTTPRequestHandler):
             if path=='/api/chat':
                 body=self._read_json();text=str(body.get('message','')).strip();language=body.get('language','zh')
                 if not text:raise ValueError('请输入消息。')
+                # Imported documents survive a dialogue/transport failure on the first turn.
+                if self.state.status=='ready_for_brief':
+                    spec=self.state.creative_spec
+                    if 'skill_files' in body:spec.enriched_context['uploaded_skills']=skill_files(body['skill_files'])
+                    if 'multimodal_assets' in body:
+                        spec.multimodal_assets=self._normalise_multimodal_assets(body)
+                        spec.reference_asset=next((a for a in spec.multimodal_assets if a['media_type']=='image'),None)
                 try:decision=decide_chat_turn(self.state,text,language)
                 except (ValueError,OSError,KeyError,TypeError) as error:
                     self.state.creative_spec.enriched_context.setdefault('chat_errors',[]).append({'model':configured_model(),'type':type(error).__name__,'detail':str(error)[:300]})
@@ -304,24 +289,6 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 self.chat_body=body
             if self.state.status in PREPARATION_STATES and path in {'/api/recommend-video-model','/api/confirm-video-model','/api/configure-generation','/api/plan-character-references','/api/generate-character-references','/api/attach-character-references','/api/approve-plan','/api/confirm-generation','/api/generate-video'}:
                 raise ValueError('请先在对话中完成 Skill 与全部需求的整合和创作规划。')
-            if path=='/api/explain-skill-conflict':
-                if self.state.status not in PREPARATION_STATES:raise ValueError('没有待处理的 Skill 取舍。')
-                if clarify_failure(self.state):
-                    self.state.conversation.append({'role':'assistant','kind':'skill_clarification','text':self.state.creative_spec.enriched_context['skill_clarification']['question']})
-                return self._json(200,present(self.state))
-            if path == '/api/new-canvas':
-                payload=self._read_json();name=payload.get('title','')
-                if not isinstance(name,str) or len(name.strip())>80:raise ValueError('项目名称需要少于 80 个字符。')
-                SESSIONS.clear_canvas(self.visitor_id)
-                with SESSIONS.connect() as db:
-                    db.execute('INSERT OR REPLACE INTO canvas_projects VALUES (?,?)',(self.visitor_id,uuid.uuid4().hex))
-                if name.strip():
-                    current=SESSIONS.load_canvas(self.visitor_id);current['document']['title']=name.strip()
-                    SESSIONS.save_canvas(self.visitor_id,current['revision'],current['document'])
-                return self._json(HTTPStatus.OK,{'project_id':SESSIONS.canvas_project(self.visitor_id),'workspace':'canvas'})
-            if path == '/api/projects/workspace':
-                Projects(SESSIONS).workspace(self.visitor_id,self.state.project_id,self._read_json().get('workspace'))
-                return self._json(HTTPStatus.OK, {'saved':True})
             if path == '/api/project-titles':
                 payload = self._read_json()
                 return self._json(HTTPStatus.OK, Projects(SESSIONS).start_naming(self.visitor_id, payload.get('language','zh')))
@@ -350,29 +317,6 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     raise ValueError('Multi-model routing is not enabled')
                 configure_generation(self.state, self._read_json())
                 return self._json(HTTPStatus.OK, present(self.state))
-            if path in {'/api/recommend-image-model','/api/generate-image'}:
-                payload=self._read_json();node=payload.get('node_id')
-                if not isinstance(node,str):raise ValueError('Select an image task')
-                document=SESSIONS.load_canvas(self.visitor_id)['document'];service=ImageTasks(SESSIONS,SESSIONS.canvas_project(self.visitor_id))
-                if path=='/api/recommend-image-model':result=service.recommend(self.visitor_id,node,document)
-                else:result=service.start(self.visitor_id,node,document,payload.get('choice_id'),payload.get('model_id'))
-                return self._json(HTTPStatus.ACCEPTED if result.get('status')=='running' else HTTPStatus.OK,result)
-            if path == "/api/canvas":
-                from .canvas import validate_canvas
-                payload = self._read_json()
-                document = validate_canvas(payload.get("document"), self._normalise_multimodal_assets)
-                revision = SESSIONS.save_canvas(self.visitor_id, payload.get("revision"), document)
-                if revision is None:
-                    return self._json(HTTPStatus.CONFLICT, {"error": "Canvas changed in another tab. Export your draft before reloading."})
-                return self._json(HTTPStatus.OK, {"revision": revision})
-            if path == "/api/canvas-reference":
-                payload = self._read_json()
-                assets = self.state.creative_spec.multimodal_assets
-                index = payload.get("index")
-                if payload.get("project_id") != self.state.project_id or isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(assets):
-                    raise ValueError("Project reference is no longer available")
-                asset = assets[index]
-                return self._json(HTTPStatus.OK, {"asset": self._normalise_multimodal_assets({"multimodal_assets": [{**asset, "data_url": asset.get("data_url") or asset.get("preview_data_url")}]})[0]})
             if path in {"/api/recommend-video-model", "/api/confirm-video-model"}:
                 from .agent.model_router import recommend, confirm
                 if os.getenv("VIDEO_PROVIDER") != "auto":
@@ -389,14 +333,6 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 return self._json(HTTPStatus.OK, present(self.state))
             if path in {"/api/create-project", "/api/reset"} and self.state.status == "generating_video":
                 return self._json(HTTPStatus.CONFLICT, {"error": "A video is being generated. Please wait for the result."})
-            if path == '/api/prepare-skill-prompt':
-                if self.state.status not in {'planning_ready','awaiting_first_video','awaiting_repair_upload'}:raise ValueError('请先完成当前方案。')
-                if self.state.creative_spec.character_reference_plan.get('status')=='awaiting_clarification':return self._json(200,present(self.state))
-                repair=self.state.latest_repair_task if self.state.status=='awaiting_repair_upload' else None
-                PROMPT_COMPILER.compile(self.state,repair)
-                prepare_skill_prompt(self.state,repair)
-                PROMPT_COMPILER.compile(self.state,repair)
-                return self._json(200,present(self.state))
             if path == '/api/import-references':
                 if self.state.status in {'generating_video','generated_video_ready'} or characters.running(self.state,SESSIONS,self.visitor_id):
                     raise ValueError('请等待当前生成任务完成后再追加参考素材。')
@@ -413,7 +349,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 spec.reference_asset=next((a for a in combined if a['media_type']=='image'),None)
                 spec.enriched_context['uploaded_skills']=skills
                 spec.character_reference_plan={};spec.video_model_selection={};spec.generation_contract={};spec.evaluation_contract={}
-                if skills:require_prepared_brief(self.state)
+                if skills:self.state.status='skill_preparation_required'
                 return self._json(200,present(self.state))
             if path == "/api/create-project":
                 payload = self._read_json()
@@ -421,14 +357,16 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 if not prompt:
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "A creative prompt is required"})
                 validate_brief_duration(prompt)
-                assets = self._normalise_multimodal_assets(payload)
+                assets = self._normalise_multimodal_assets(payload) if 'multimodal_assets' in payload or 'reference_asset' in payload else characters.source_assets(self.state.creative_spec)
                 reference_asset = next((asset for asset in assets if asset["media_type"] == "image"), None)
                 previous = self.state
                 self.state = create_enriched_project_state(
                     prompt, reference_asset, CONTROL_PLANNER, CONTEXT_AGENT,
                     multimodal_assets=assets,
                     ui_language=payload.get("language", "zh"),
-                    uploaded_skills=skill_files(payload.get("skill_files",[])),
+                    uploaded_skills=skill_files(payload.get("skill_files",previous.creative_spec.enriched_context.get("uploaded_skills",[]))),
+                    resolved_requirements=previous.creative_spec.enriched_context.get("resolved_requirements",{}),
+                    creative_answers=previous.creative_spec.enriched_context.get("creative_answers",[]),
                     autonomous=previous.execution_mode=='autopilot' and not previous.autopilot_paused,
                 )
                 if previous.execution_mode=='autopilot' and not previous.autopilot_paused:
@@ -544,7 +482,6 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     original=self.state;spec=original.creative_spec;context=spec.enriched_context
                     turn=getattr(self,'chat_decision',{})
                     retry=turn.get('intent') in {'retry','plan','confirm_generation'} if turn else bool(re.fullmatch(r'(?:重试|继续|重新处理|重新规划|retry|continue)[。！!,.\s]*',instruction,re.I))
-                    if original.status=='awaiting_skill_clarification' and retry:return self._json(200,present(self.state))
                     is_answer=turn.get('intent')=='answer' if turn else original.status=='awaiting_skill_clarification'
                     prompt=spec.source_prompt if retry or is_answer else spec.source_prompt+'\n\nAdditional user direction: '+instruction
                     answers=list(context.get('creative_answers',[]))
@@ -554,8 +491,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     validate_brief_duration(prompt)
                     self.state=create_enriched_project_state(prompt,characters.source_reference(spec),CONTROL_PLANNER,CONTEXT_AGENT,
                         multimodal_assets=characters.source_assets(spec),ui_language=payload.get('language',context.get('ui_language','zh')),
-                        uploaded_skills=context.get('uploaded_skills',[]),skill_checkpoint=context.get('skill_execution') if retry else None,
-                        prepared_basis=context.get('skill_brief') if retry else None,creative_answers=answers,resolved_requirements=requirements,
+                        uploaded_skills=context.get('uploaded_skills',[]),creative_answers=answers,resolved_requirements=requirements,
                         autonomous=original.execution_mode=='autopilot' and not original.autopilot_paused)
                     self.state.project_id=original.project_id;self.state.project_name=original.project_name
                     self.state.execution_mode=original.execution_mode;self.state.autopilot_paused=original.autopilot_paused
@@ -620,7 +556,6 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 })
                 return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/generate-video":
-                if not has_prepared_brief(self.state):raise ValueError('请先在对话中完成 Skill 与需求的整合和创作规划。')
                 characters.sync(self.state, SESSIONS, self.visitor_id)
                 characters.ensure_ready(self.state)
                 if (self.state.creative_spec.production_strategy or {}).get("mode") == "needs_segmentation":
@@ -634,8 +569,6 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "The Agent must create a repair task before generating the next version"})
                 version_id = "v1" if self.state.current_version_id == "none" else self._next_version_id(self.state.current_version_id)
                 PROMPT_COMPILER.compile(self.state, self.state.latest_repair_task if repairing else None, version_id)
-                if prepare_skill_prompt(self.state,self.state.latest_repair_task if repairing else None):
-                    PROMPT_COMPILER.compile(self.state,self.state.latest_repair_task if repairing else None,version_id)
                 if not VIDEO_GENERATOR.available():
                     raise ValueError("Video generation is not configured. Check your local model settings.")
                 selection = VIDEO_GENERATOR.select_tool(self.state)
@@ -675,7 +608,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                             f"{self.state.creative_spec.generation_spec.get('aspect_ratio', 'planned')} "
                             f"at {self.state.creative_spec.generation_spec.get('quality_target', 'planned')} clarity."
                         ),
-                        "skill_execution": self.state.creative_spec.enriched_context.get('skill_execution'),
+                        "video_prompt": self.state.creative_spec.enriched_context.get("video_prompt"),
                         "submitted_prompt_sha256": hashlib.sha256(job.prompt.encode()).hexdigest(),
                         "tool": job.tool_name,
                         "provider": job.provider_id,

@@ -1,19 +1,19 @@
-/* Saved projects are first-class workspaces, with isolated canvas drafts. */
+/* Persisted VCL projects. */
 window.ProjectHistory=(()=>{
   const grid=document.querySelector('#history-projects'),status=document.querySelector('#history-status');
-  let projects=[],poll=null,loading=false,naming=false,editing=null,typeFilter='all';
+  let projects=[],poll=null,loading=false,naming=false,editing=null;
   const icon=name=>`<svg class="ui-icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
   function message(text){status.textContent=I18n.text(text);}
   function renderCards(){
     if(editing)return;
     grid.replaceChildren();
-    for(const project of projects.filter(p=>typeFilter==='all'||p.kind===typeFilter)){
+    for(const project of projects){
       const card=document.createElement('article');card.className='history-card';
       const open=document.createElement('button');open.type='button';open.className='history-open';
       open.setAttribute('aria-label',I18n.text('Open project')+' · '+project.title);
       const preview=document.createElement('div');preview.className='history-preview';
-      if(project.preview_kind){const image=document.createElement('img');image.src=project.preview_url;image.alt=project.title;image.loading='lazy';image.addEventListener('error',()=>{image.remove();preview.innerHTML=icon('canvas');},{once:true});preview.append(image);}
-      else preview.innerHTML=icon('canvas');
+      if(project.preview_kind){const image=document.createElement('img');image.src=project.preview_url;image.alt=project.title;image.loading='lazy';image.addEventListener('error',()=>{image.remove();preview.innerHTML=icon('folder');},{once:true});preview.append(image);}
+      else preview.innerHTML=icon('folder');
       if(project.preview_kind==='video'){const badge=document.createElement('span');badge.className='history-video-badge';badge.innerHTML=icon('video');preview.append(badge);}
       const title=document.createElement('h2');title.textContent=project.title;title.translate=false;
       open.append(preview,title);open.addEventListener('click',()=>openProject(project,open));
@@ -21,7 +21,7 @@ window.ProjectHistory=(()=>{
       const date=document.createElement('time');date.dateTime=project.updated_at;date.textContent=new Intl.DateTimeFormat(I18n.language==='zh'?'zh-CN':'en',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}).format(new Date(project.updated_at));date.translate=false;
       const rename=document.createElement('button');rename.type='button';rename.className='history-rename';rename.innerHTML=icon('pencil');rename.title=I18n.text('Rename project');rename.setAttribute('aria-label',rename.title+' · '+project.title);
       rename.addEventListener('click',()=>renameProject(project,card,title));
-      const type=document.createElement('span');type.className='history-project-type';type.textContent=project.kind==='canvas'?I18n.text('Canvas project'):'VCLA Agent';footer.append(type,date,rename);card.append(open,footer);grid.append(card);
+      const type=document.createElement('span');type.className='history-project-type';type.textContent='VCL Agent';footer.append(type,date,rename);card.append(open,footer);grid.append(card);
     }
     message(grid.childElementCount?'':'No saved projects yet');
   }
@@ -43,7 +43,6 @@ window.ProjectHistory=(()=>{
   async function openProject(project,button){
     button.disabled=true;clearTimeout(poll);
     try{
-      await window.CanvasImages.flush();
       const data=await endpoint('/api/projects/open',{method:'POST',body:JSON.stringify({project_id:project.id})});
       location.assign('/?project='+encodeURIComponent(data.project_id)+'&opened='+Date.now()+'#'+data.workspace);
     }catch(error){message(error.message);button.disabled=false;}
@@ -65,8 +64,7 @@ window.ProjectHistory=(()=>{
       if(document.body.dataset.workspace==='history')poll=setTimeout(load,3000);
     }finally{loading=false;grid.setAttribute('aria-busy','false');}
   }
-  document.querySelector('#history-new-project').addEventListener('click',()=>window.openNewProject('vcl',true));
-  document.querySelectorAll('[data-project-type]').forEach(button=>button.addEventListener('click',()=>{typeFilter=button.dataset.projectType;document.querySelectorAll('[data-project-type]').forEach(tab=>tab.setAttribute('aria-selected',String(tab===button)));renderCards();}));
+  document.querySelector('#history-new-project').addEventListener('click',()=>window.openNewProject());
   window.addEventListener('languagechange',renderCards);
   return {load};
 })();

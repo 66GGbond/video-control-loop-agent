@@ -10,7 +10,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from backend.app.canvas import empty_canvas
 from backend.app.demo import create_empty_state, create_demo_state
 from backend.app.image_tasks import ImageTasks
 from backend.app.projects import Projects
@@ -26,33 +25,7 @@ class ProjectStorageTests(unittest.TestCase):
         self.tmp=TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.store=SessionStore(Path(self.tmp.name));self.visitor,_=self.store.visitor('');self.projects=Projects(self.store)
 
-    def test_snapshots_keep_independent_states_canvas_and_restore_revision(self):
-        first=create_demo_state('校园故事');first.conversation=[{'role':'user','text':'原始消息'}];self.store.save(self.visitor,first)
-        doc=empty_canvas();doc['title']='校园画布';doc['nodes']=[{'id':'a','kind':'text','text':'原始画布'}]
-        self.store.save_canvas(self.visitor,0,doc)
-        second=create_demo_state('茶饮广告');self.store.clear_canvas(self.visitor);self.store.save(self.visitor,second)
-        self.assertNotEqual(first.project_id,second.project_id)
-        self.assertEqual(len(self.projects.list(self.visitor)['projects']),3)
-        revision=self.store.load_canvas(self.visitor)['revision']
-        restored,workspace=self.projects.open(self.visitor,first.project_id)
-        self.assertEqual(restored.conversation,first.conversation);self.assertEqual(workspace,'vcl')
-        self.assertEqual(self.store.load_canvas(self.visitor)['document']['nodes'],[])
-        canvas_id=next(p['id'] for p in self.projects.list(self.visitor)['projects'] if p['kind']=='canvas')
-        self.projects.open(self.visitor,canvas_id)
-        self.assertEqual(self.store.load_canvas(self.visitor)['document'],doc)
-        self.assertGreater(self.store.load_canvas(self.visitor)['revision'],revision)
-        self.assertIsNone(self.store.save_canvas(self.visitor,revision,empty_canvas()))
-        self.assertEqual(self.store.load(self.visitor).project_id,first.project_id)
 
-    def test_canvas_only_draft_is_archived_but_empty_workspaces_are_not(self):
-        state=create_empty_state();self.store.save(self.visitor,state)
-        self.assertEqual(self.projects.list(self.visitor)['projects'],[])
-        doc=empty_canvas();doc['nodes']=[{'id':'a','kind':'image','asset':{'name':'hero.png','preview_data_url':DATA}}]
-        self.store.save_canvas(self.visitor,0,doc)
-        row=self.projects.list(self.visitor)['projects'][0]
-        self.assertEqual(row['workspace'],'canvas');self.assertEqual(row['preview_kind'],'image')
-        self.assertEqual(self.projects.image(self.visitor,row['id']),('image/png',PNG))
-        self.assertNotIn('canvas',row);self.assertNotIn('summary',row)
 
     def test_names_are_generated_once_short_and_manual_rename_wins(self):
         state=create_demo_state('校园逆袭剧情');self.store.save(self.visitor,state)
@@ -114,32 +87,7 @@ class ProjectStorageTests(unittest.TestCase):
         self.assertEqual(second.get(self.visitor,'draw'),{})
         self.assertEqual(first.get(self.visitor,'draw')['status'],'succeeded')
 
-    def test_legacy_project_and_canvas_are_migrated_once(self):
-        state=create_demo_state('保留的旧项目');state.project_id='control-plan'
-        doc=empty_canvas();doc['nodes']=[{'id':'draw','kind':'image_task','text':'portrait'}, {'id':'out','kind':'output','project_id':'control-plan'}]
-        with self.store.connect() as db:
-            db.execute('UPDATE visitors SET state=? WHERE id=?',(json.dumps(encode(state)),self.visitor))
-            db.execute('INSERT INTO canvases VALUES (?,?,?)',(self.visitor,4,json.dumps(doc)))
-        ImageTasks(self.store).put(self.visitor,'draw',{'status':'succeeded'})
-        migrated=SessionStore(Path(self.tmp.name));ident=migrated.load(self.visitor).project_id
-        self.assertNotEqual(ident,'control-plan');self.assertEqual(len(Projects(migrated).list(self.visitor)['projects']),2)
-        self.assertEqual(migrated.load_canvas(self.visitor)['document']['nodes'][1]['project_id'],ident)
-        self.assertEqual(ImageTasks(migrated,migrated.canvas_project(self.visitor)).get(self.visitor,'draw')['status'],'succeeded')
-        self.assertEqual(SessionStore(Path(self.tmp.name)).load(self.visitor).project_id,ident)
 
-    def test_unscoped_legacy_image_task_moves_once_with_stable_project_id(self):
-        state=create_demo_state('保留生图操作');self.store.save(self.visitor,state)
-        doc=empty_canvas();doc['nodes']=[{'id':'draw','kind':'image_task','text':'portrait'}]
-        self.store.save_canvas(self.visitor,0,doc)
-        ImageTasks(self.store).put(self.visitor,'draw',{'status':'recommended'})
-        migrated=SessionStore(Path(self.tmp.name))
-        self.assertEqual(ImageTasks(migrated,migrated.canvas_project(self.visitor)).get(self.visitor,'draw')['status'],'recommended')
-        self.assertEqual(ImageTasks(migrated).get(self.visitor,'draw'),{})
-        migrated.clear_canvas(self.visitor)
-        other=create_empty_state();migrated.save(self.visitor,other)
-        migrated.save_canvas(self.visitor,migrated.load_canvas(self.visitor)['revision'],doc)
-        again=SessionStore(Path(self.tmp.name))
-        self.assertEqual(ImageTasks(again,other.project_id).get(self.visitor,'draw'),{})
 
 
 class ProjectHTTPTests(unittest.TestCase):
@@ -219,36 +167,3 @@ class ProjectHTTPTests(unittest.TestCase):
         self.assertEqual(continued['project_id'],first['project_id'])
         self.assertIn('改为黄昏',continued['creative_spec']['source_prompt'])
         self.assertEqual(len(self.request('/api/projects')[1]['projects']),2)
-
-    def test_navigation_does_not_change_project_type(self):
-        visitor=self.session();state=create_demo_state('茶饮视频');self.store.save(visitor,state)
-        self.assertEqual(self.request('/api/projects/workspace',{'workspace':'canvas'})[0],200)
-        state.creative_spec.max_iterations=3;self.store.save(visitor,state)
-        self.assertEqual(self.request('/api/projects/open',{'project_id':state.project_id})[1]['workspace'],'vcl')
-        self.assertEqual(self.request('/api/projects/workspace',{'workspace':'unexpected'})[0],400)
-
-    def test_named_vcl_creation_keeps_canvas_independent(self):
-        visitor=self.session();state=create_demo_state('原来的VCL项目');self.store.save(visitor,state)
-        doc=empty_canvas();doc['title']='独立画布';doc['nodes']=[{'id':'n','kind':'text','text':'画布内容','title':'','x':0,'y':0}]
-        current=self.request('/api/canvas')[1];self.request('/api/canvas',{'revision':current['revision'],'document':doc})
-        canvas_id=self.request('/api/canvas')[1]['project_id']
-        _,new=self.request('/api/reset',{'title':'我的新故事'})
-        self.assertEqual(new['project_name'],'我的新故事')
-        self.assertEqual(self.request('/api/canvas')[1]['document'],doc)
-        self.assertEqual(self.request('/api/canvas')[1]['project_id'],canvas_id)
-        rows=self.request('/api/projects')[1]['projects']
-        self.assertEqual({p['kind'] for p in rows},{'vcl','canvas'})
-        self.assertEqual(next(p['title'] for p in rows if p['id']==new['project_id']),'我的新故事')
-        self.request('/api/projects/open',{'project_id':canvas_id})
-        self.assertEqual(self.request('/api/state')[1]['project_id'],new['project_id'])
-        self.request('/api/projects/open',{'project_id':state.project_id})
-        self.assertEqual(self.request('/api/canvas')[1]['project_id'],canvas_id)
-
-    def test_new_canvas_does_not_replace_vcl_and_rejects_stale_canvas(self):
-        visitor=self.session();state=create_demo_state('VCL保留');self.store.save(visitor,state)
-        old=self.request('/api/canvas')[1]['project_id']
-        status,data=self.request('/api/new-canvas',{'title':'新画布'})
-        self.assertEqual(status,200,data);self.assertNotEqual(data['project_id'],old)
-        self.assertEqual(self.request('/api/state')[1]['project_id'],state.project_id)
-        self.assertEqual(self.request('/api/canvas')[1]['document']['title'],'新画布')
-        self.assertEqual(self.request('/api/generate-image',{'node_id':'n'},headers={'X-Canvas-ID':old})[0],409)

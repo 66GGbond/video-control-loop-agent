@@ -12,11 +12,10 @@ def now():
     return datetime.now(timezone.utc).isoformat(timespec='microseconds')
 
 
-def preview(state, canvas):
+def preview(state):
     spec = state.creative_spec
     candidates = [(a.get('poster_data_url'), 'video') for a in [state.current_video_asset or {}, *[r.asset or {} for r in reversed(state.version_reviews)]]]
     candidates += [(a.get('preview_data_url') or a.get('data_url'), 'image') for a in spec.multimodal_assets or ([spec.reference_asset] if spec.reference_asset else []) if a.get('media_type') == 'image' or a.get('mime_type', '').startswith('image/')]
-    candidates += [(n.get('asset', {}).get('preview_data_url') or n.get('asset', {}).get('data_url'), 'image') for n in canvas.get('nodes', []) if n.get('kind') == 'image']
     for value, kind in candidates:
         if not isinstance(value, str) or ',' not in value:
             continue
@@ -33,41 +32,20 @@ def preview(state, canvas):
     return '', b'', ''
 
 
-def canvas_ident(db, visitor):
-    import uuid
-    db.execute('INSERT OR IGNORE INTO canvas_projects VALUES (?,?)',(visitor,uuid.uuid4().hex))
-    return db.execute('SELECT id FROM canvas_projects WHERE visitor_id=?',(visitor,)).fetchone()[0]
-
-
 def snapshot(db, visitor, state):
-    from .canvas import empty_canvas
-    from .demo import create_empty_state
-    row=db.execute('SELECT document FROM canvases WHERE visitor_id=?',(visitor,)).fetchone()
-    canvas=json.loads(row[0]) if row else empty_canvas()
-    _snapshot(db,visitor,state,empty_canvas(),'vcl')
-    blank=create_empty_state();blank.project_id=canvas_ident(db,visitor)
-    _snapshot(db,visitor,blank,canvas,'canvas')
-
-
-def _snapshot(db,visitor,state,canvas,kind):
     from .sessions import encode
     spec=state.creative_spec
-    if kind=='vcl' and not (spec.source_prompt or spec.goal or state.project_name):return
-    if kind=='canvas' and not (canvas['nodes'] or canvas['title'] not in {'','Untitled canvas'}):return
+    if not (spec.source_prompt or spec.goal or state.project_name):return
     state_json=json.dumps(encode(state),ensure_ascii=False)
-    canvas_json=json.dumps(canvas,ensure_ascii=False)
     prior=db.execute('SELECT * FROM projects WHERE visitor_id=? AND id=?',(visitor,state.project_id)).fetchone()
-    if prior and prior['state']==state_json and prior['canvas']==canvas_json and prior['kind']==kind:return
+    if prior and prior['state']==state_json:return
     title=prior['title'] if prior else state.project_name or '未命名项目'
     source=prior['title_source'] if prior else 'user' if state.project_name else 'pending'
-    old_title=json.loads(prior['canvas']).get('title') if prior else None
-    if kind=='canvas' and canvas['title'] not in {'','Untitled canvas'} and canvas['title']!=old_title:
-        title,source=canvas['title'][:80],'user'
-    summary=(spec.source_prompt or spec.goal or '\n'.join(n.get('text','') or n.get('asset',{}).get('name','') for n in canvas['nodes']))[:2000]
-    mime,image,preview_kind=preview(state,canvas);stamp=now()
-    db.execute('''INSERT OR REPLACE INTO projects
-      (visitor_id,id,title,title_source,state,canvas,workspace,summary,preview_mime,preview,preview_kind,created_at,updated_at,kind)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',(visitor,state.project_id,title,source,state_json,canvas_json,kind,summary,mime,image,preview_kind,prior['created_at'] if prior else stamp,stamp,kind))
+    summary=(spec.source_prompt or spec.goal)[:2000]
+    mime,image,preview_kind=preview(state);stamp=now()
+    db.execute("""INSERT OR REPLACE INTO projects
+      (visitor_id,id,title,title_source,state,workspace,summary,preview_mime,preview,preview_kind,created_at,updated_at,kind)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",(visitor,state.project_id,title,source,state_json,'vcl',summary,mime,image,preview_kind,prior['created_at'] if prior else stamp,stamp,'vcl'))
 
 
 class Projects:
@@ -83,10 +61,6 @@ class Projects:
         with self.store.connect() as db:
             row = db.execute('SELECT preview_mime,preview FROM projects WHERE visitor_id=? AND id=?', (visitor, ident)).fetchone()
         return (row[0], row[1]) if row and row[1] else None
-
-    def workspace(self, visitor, ident, name):
-        if name not in {'vcl','canvas'}:raise ValueError('Invalid workspace')
-        # Project type is immutable; navigation never changes the archive type.
 
     def rename(self, visitor, ident, title):
         if not isinstance(title, str) or not title.strip() or len(title.strip()) > 80:
@@ -144,17 +118,9 @@ class Projects:
         from .sessions import decode, encode
         with self.store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            row = db.execute('SELECT state,canvas,workspace,kind FROM projects WHERE visitor_id=? AND id=?', (visitor, ident)).fetchone()
-            if not row:
-                raise ValueError('项目不存在或不属于当前会话。')
-            if row['kind']=='canvas':
-                revision=db.execute('SELECT revision FROM canvases WHERE visitor_id=?',(visitor,)).fetchone()
-                db.execute('INSERT OR REPLACE INTO canvases VALUES (?,?,?)',(visitor,revision[0]+1 if revision else 1,row['canvas']))
-                db.execute('INSERT OR REPLACE INTO canvas_projects VALUES (?,?)',(visitor,ident))
-                active=db.execute('SELECT state FROM visitors WHERE id=?',(visitor,)).fetchone()
-                state=decode(json.loads(active[0]))
-            else:
-                state=decode(json.loads(row['state']))
-                if state.execution_mode=='autopilot':state.autopilot_paused=True
-                db.execute('UPDATE visitors SET state=? WHERE id=?',(json.dumps(encode(state),ensure_ascii=False),visitor))
-        return state,row['kind']
+            row = db.execute("SELECT state FROM projects WHERE visitor_id=? AND id=? AND kind='vcl'", (visitor, ident)).fetchone()
+            if not row:raise ValueError('项目不存在或不属于当前会话。')
+            state=decode(json.loads(row['state']))
+            if state.execution_mode=='autopilot':state.autopilot_paused=True
+            db.execute('UPDATE visitors SET state=? WHERE id=?',(json.dumps(encode(state),ensure_ascii=False),visitor))
+        return state,'vcl'

@@ -75,7 +75,7 @@ def failed_planning_state(prompt, reference_asset, context, assets, error, statu
     spec.reference_asset=reference_asset;spec.multimodal_assets=assets or ([reference_asset] if reference_asset else [])
     spec.enriched_context=context;spec.planning_source='incomplete'
     spec.planning_notice=failure_message(error,context.get('ui_language','zh'))
-    context['planning_error']={'type':type(error).__name__,'message':spec.planning_notice}
+    context['planning_error']={'type':type(error).__name__,'message':spec.planning_notice,'detail':str(error)[:500]}
     return state
 
 
@@ -183,7 +183,7 @@ def create_project_state(
     """Use the live planning tool when available, with a deterministic fallback."""
     def finish(state: ProjectState) -> ProjectState:
         context = enriched_context or {}
-        for key in ('creative_questions','planning_basis_sha256'):
+        for key in ('creative_questions','video_prompt','skill_application','video_model_recommendation'):
             if state.creative_spec.enriched_context.get(key):context={**context,key:state.creative_spec.enriched_context[key]}
         state.creative_spec.enriched_context = context
         state.creative_spec.multimodal_assets = multimodal_assets or ([reference_asset] if reference_asset else [])
@@ -253,39 +253,15 @@ def create_enriched_project_state(
     multimodal_assets: list[dict] | None = None,
     ui_language: str = "zh",
     uploaded_skills: list[dict] | None = None,
-    skill_checkpoint: dict | None = None,
-    prepared_basis: dict | None = None,
     creative_answers: list[dict] | None = None,
     resolved_requirements: dict | None = None,
     autonomous: bool = False,
 ) -> ProjectState:
     """Run the bounded pre-generation agent before compiling a control plan."""
-    from .skill_execution import prepare_brief,has_prepared_brief,clarify_failure
     source_context={'uploaded_skills':uploaded_skills or [],'ui_language':'en' if ui_language=='en' else 'zh'}
     source_context['creative_answers']=creative_answers or []
     source_context['resolved_requirements']=resolved_requirements or {}
     source_context['autonomous']=autonomous
-    skill_history=[]
-    if uploaded_skills:
-        # No storyboard, recommendation or character job may precede this step.
-        provisional=create_empty_state();spec=provisional.creative_spec
-        spec.goal=prompt;spec.source_prompt=prompt;spec.reference_asset=reference_asset
-        spec.multimodal_assets=multimodal_assets or ([reference_asset] if reference_asset else [])
-        spec.asset_manifest=build_asset_manifest(spec.multimodal_assets)
-        spec.generation_spec=fallback_generation_spec(prompt,reference_asset)
-        spec.enriched_context=source_context
-        if skill_checkpoint:source_context['skill_execution']=skill_checkpoint
-        if prepared_basis:source_context['skill_brief']=prepared_basis
-        try:
-            if not has_prepared_brief(provisional):
-                source_context.pop('skill_brief',None)
-                prepare_brief(provisional)
-            skill_history=provisional.history
-        except (OSError,ValueError,KeyError,TypeError) as error:
-            failed=failed_planning_state(prompt,reference_asset,source_context,multimodal_assets,error,'skill_preparation_failed')
-            try:clarify_failure(failed)
-            except (OSError,ValueError,KeyError,TypeError):pass
-            return failed
     agent = context_agent or ContextEnrichmentAgent()
     context = agent.enrich(prompt, reference_asset, target_market, multimodal_assets)
     context.update(source_context)
@@ -305,7 +281,6 @@ def create_enriched_project_state(
         state = ProjectState(project_id=uuid.uuid4().hex, creative_spec=spec, current_version_id="none", status="awaiting_context_confirmation")
     else:
         state = create_project_state(prompt, reference_asset, control_planner, context, multimodal_assets)
-    state.history=[*skill_history,*state.history]
     for observation in context.get("tool_observations", []):
         state.history.append({
             "at": "local-demo",

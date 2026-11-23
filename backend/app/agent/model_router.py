@@ -34,28 +34,35 @@ def recommend(state):
     if eligible:
         chosen=next((c for c in eligible if c['model_id']==(H3 if low_cost_requested(state.creative_spec.source_prompt) else SEEDANCE_25)),eligible[0])
         result.update(recommended_model=chosen['model_id'],source='policy_fallback',reason='决策模型暂不可用；按能力约束和已配置策略给出备用推荐，不代表效果实测排名。')
-        try:
-            if not os.getenv('ARK_API_KEY'): raise ValueError('No decision model key')
-            spec=state.creative_spec
-            payload={'brief':spec.source_prompt,'objective':spec.goal,'output_spec':spec.generation_spec,
-                     'immutable_constraints':spec.immutable_character_attributes,'director_plan':spec.production_direction,
-                     'shot_plan':spec.shots,'repair_priority':state.latest_repair_task.prompt if state.latest_repair_task else None,
-                     'reference_manifest':spec.asset_manifest,'eligible_models':eligible,
-                     'excluded_models':[{'model_id':c['model_id'],'reasons':c['exclusion_reasons']} for c in cards if not c['eligible']]}
-            language='English' if spec.enriched_context.get('ui_language')=='en' else 'Simplified Chinese'
-            system=SKILL.read_text()+f'\nWrite user-facing reasons, tradeoffs and alternatives in {language}. Preserve model names, technical terms and quoted user phrases; keep JSON keys and model IDs unchanged.'
-            decision=request_json(os.environ['ARK_API_KEY'],configured_model(),system,payload,1800,timeout=90)
-            ids={c['model_id'] for c in eligible}
-            if decision.get('recommended_model') not in ids or not isinstance(decision.get('reason'),str) or not decision['reason'].strip(): raise ValueError('Invalid model recommendation')
-            tradeoffs=decision.get('tradeoffs',[])
-            alternatives=decision.get('alternatives',[])
-            if not isinstance(tradeoffs,list) or not all(isinstance(v,str) for v in tradeoffs): raise ValueError('Invalid tradeoffs')
-            if not isinstance(alternatives,list) or any(not isinstance(a,dict) or a.get('model_id') not in ids or not isinstance(a.get('reason'),str) for a in alternatives): raise ValueError('Invalid alternatives')
-            claims=' '.join([decision['reason'],*tradeoffs,*[a['reason'] for a in alternatives]])
-            if re.search(r'(?:\$|¥)\s*\d|\d+(?:\.\d+)?\s*元|cheaper than|objectively cheapest|音频(?:分析|理解).{0,6}(?:很差|最差)|poor audio understanding',claims,re.I):
-                raise ValueError('Unsupported price or audio-quality claim')
-            result.update(recommended_model=decision['recommended_model'],reason=decision['reason'],tradeoffs=tradeoffs[:5],alternatives=alternatives[:3],source='doubao_seed_2_1_pro')
-        except (ValueError,OSError,KeyError,TypeError): pass
+        if state.creative_spec.enriched_context.get('video_prompt'):
+            decision=state.creative_spec.enriched_context.get('video_model_recommendation') or {}
+            if decision.get('model_id') in {c['model_id'] for c in eligible}:
+                result.update(recommended_model=decision['model_id'],source='doubao_seed_2_1_pro',reason=str(decision.get('reason') or '主 Agent 在创作规划中选择的模型。'))
+            else:
+                result.update(source='configured_default',reason='使用当前已配置的兼容默认模型；可直接在生成设置中修改。')
+        else:
+            try:
+                if not os.getenv('ARK_API_KEY'): raise ValueError('No decision model key')
+                spec=state.creative_spec
+                payload={'brief':spec.source_prompt,'objective':spec.goal,'output_spec':spec.generation_spec,
+                         'immutable_constraints':spec.immutable_character_attributes,'director_plan':spec.production_direction,
+                         'shot_plan':spec.shots,'repair_priority':state.latest_repair_task.prompt if state.latest_repair_task else None,
+                         'reference_manifest':spec.asset_manifest,'eligible_models':eligible,
+                         'excluded_models':[{'model_id':c['model_id'],'reasons':c['exclusion_reasons']} for c in cards if not c['eligible']]}
+                language='English' if spec.enriched_context.get('ui_language')=='en' else 'Simplified Chinese'
+                system=SKILL.read_text()+f'\nWrite user-facing reasons, tradeoffs and alternatives in {language}. Preserve model names, technical terms and quoted user phrases; keep JSON keys and model IDs unchanged.'
+                decision=request_json(os.environ['ARK_API_KEY'],configured_model(),system,payload,1800,timeout=90)
+                ids={c['model_id'] for c in eligible}
+                if decision.get('recommended_model') not in ids or not isinstance(decision.get('reason'),str) or not decision['reason'].strip(): raise ValueError('Invalid model recommendation')
+                tradeoffs=decision.get('tradeoffs',[])
+                alternatives=decision.get('alternatives',[])
+                if not isinstance(tradeoffs,list) or not all(isinstance(v,str) for v in tradeoffs): raise ValueError('Invalid tradeoffs')
+                if not isinstance(alternatives,list) or any(not isinstance(a,dict) or a.get('model_id') not in ids or not isinstance(a.get('reason'),str) for a in alternatives): raise ValueError('Invalid alternatives')
+                claims=' '.join([decision['reason'],*tradeoffs,*[a['reason'] for a in alternatives]])
+                if re.search(r'(?:\$|¥)\s*\d|\d+(?:\.\d+)?\s*元|cheaper than|objectively cheapest|音频(?:分析|理解).{0,6}(?:很差|最差)|poor audio understanding',claims,re.I):
+                    raise ValueError('Unsupported price or audio-quality claim')
+                result.update(recommended_model=decision['recommended_model'],reason=decision['reason'],tradeoffs=tradeoffs[:5],alternatives=alternatives[:3],source='doubao_seed_2_1_pro')
+            except (ValueError,OSError,KeyError,TypeError): pass
     preferred=previous.get('user_model')
     if preferred and any(c['model_id']==preferred and c['eligible'] for c in eligible):
         result.update(selected_model=preferred,user_model=preferred)

@@ -1,67 +1,25 @@
-# 历史项目
+# 本地项目与创作 Agent
 
-左侧「历史项目」显示当前本地会话保存的项目。卡片使用项目中的图片或已保留的视频取样帧作为预览；尚无视觉素材时显示画布占位图，不编造预览。画布与 VCLA Agent 使用独立的项目标识、活动项目和存档。历史页面提供类型标签及筛选，打开一种类型的项目不会替换另一种类型的活动内容。
+左侧仅保留 VCL Agent 与历史项目。项目保留需求、聊天、Skill 文档、参考素材、参数、生成任务和视频版本；卡片使用已有图片或视频帧预览，没有素材时显示文件夹图标。
 
-项目名称由 Doubao 根据创作需求或画布内容在后台概括，默认标题严格限制为 10 个 Unicode 字符以内。命名任务不会阻塞项目打开和重命名。同一批任务只提交一次；服务重启后未完成的命名任务恢复为待处理。决策模型不可用或返回无效名称时使用「未命名项目」，不冒充 Agent 结果。用户可通过铅笔按钮修改名称，手动名称不受后台命名或后续自动保存覆盖。
+新建时可以命名，也可以由豆包在后台概括名称。手动改名优先于后台命名。打开项目恢复其内容，自主代理开关始终可用；恢复自主模式项目时先暂停，用户可以继续。
 
-VCLA Agent 项目保存聊天、脚本、参数、参考素材、生成任务与视频版本；画布项目保存自己的节点、连线、视口和生图作业。两类存档分别进入对应工作区。VCLA Agent 的「新建项目」允许用户先填写名称（留空则按后续需求自动命名），并保留原项目；新建 VCLA Agent 项目不清空画布，新建画布也不重置 VCLA Agent。恢复自主模式项目时保持暂停，需要用户主动继续。画布节点、视口与草稿按项目隔离；相同节点 ID 的生图任务也按项目隔离。切换前先保存画布，旧页面的项目标识和画布修订号可阻止过期请求覆盖其他项目。
+历史列表和预览直接读取已保存快照，不等待活动项目的模型请求，也不回写活动项目。请求失败显示重试状态，不冒充空列表。
 
-存储仍使用本地 SQLite，项目、预览与恢复接口都检查当前会话归属。现有保留项目会迁移为独立项目标识；迁移前未被系统保留的旧项目无法凭空恢复。历史页面不会展示其他浏览器会话的内容。
+## 对话和规划
 
-旧版混合存档会迁移拆分：保留原 VCLA Agent 内容，并将非空画布保存为独立画布项目；画布图片作业迁移到对应画布的范围。命名、预览和恢复均按项目类型处理。
+每条对话交给已配置的豆包对话模型，结合原始需求、最近对话、待回答问题和已接受的决定判断当前意图。回答与补充决定单独保存，追问能力或进度不修改需求。问题标识和原文证据由本地关联，不要求模型精确回显内部字段。首次对话连接失败时仍保留已上传文档和参考素材。
 
-## VCL 项目工具栏
+规划时，上传的 Skill 全文、原始 prompt、参考素材上下文和已确认决定进入同一次豆包请求，同时生成控制计划、Skill 应用结果、完整视频提示词及视频模型建议。没有独立的 Skill 审核、指纹通过门或整份规划自动重写。验收来源的同义字段本地归一化，质检重点可覆盖全部计划镜头。
 
-页面仅保留 Video Control Loop Agent 主标题，下方独立项目工具栏显示当前项目名称，并提供重命名、选择项目及新建入口。新建并命名后立即进入该项目；切换项目恢复其内容，刷新仍显示其在历史记录中的最新名称。工具栏选择器仅列出 VCL 项目，画布项目仍由历史项目入口打开。空白项目也会通知界面当前状态，避免只有生成脚本后才刷新项目身份。
+生成视频使用规划中的完整提示词，并附上当前输出参数、时间线、人物参考绑定和修复变更。模型与参数仍需符合供应商接口；已有生成任务保留，避免重复提交。
 
-## 创作对话
+常规回复不等待模型选型或人物参考规划。新规划的模型建议直接复用主 Agent 结果，没有该字段时使用明确标注的兼容默认模型。人物参考图在进入制作流程时准备；明确要求跳过时不启动人物模型。自主模式在用户开启后按当前任务继续。
 
-回车发送消息，Shift+回车换行。每轮只显示一个必要的创意问题，等待用户回答；生成确认也通过聊天完成。人物三视图模块展示参考图，沟通集中在创作浮窗。四角星图标开启自主代理后，Agent 自行确定缺失创意细节，并在既定修复预算内继续人物参考、视频生成、质检和修复。失败或结果不确定的付费请求仍保留防重复提交保护。
+## 生成设置
 
-## 创作参考与 Skill 导入
+画面侧重模块已移除。Seedance 清晰度可选择 480p、720p、1080p，实际可选值按当前模型能力展示并传入请求。修复预算在设置中直接调整，不产生额外浮层。
 
-输入框上方工具栏仅提供参考素材与自主代理；MD / Skill 文档统一从参考素材入口导入，不再设置独立文件夹 / Skill 入口。首次输入和已有项目均可附加图片、MP3/WAV 音频与 Skill 文本，发送消息后保存在该 VCL 项目中；`SKILL.md` 及同文件夹 Markdown、TXT、JSON、YAML 作为规划模型的用户创作指导，不执行本地脚本。保留相对文件路径，排除隐藏目录和依赖目录，限制文件数与文本总量。
+## 旧数据升级
 
-用户选择本地参考视频仅导入与预览，未配置外部素材存储。MP4/MOV 原文件留在本地项目，浏览器可双击待发送附件或点击主界面的“本地预览”播放；这些视频明确排除在生成模型输入及模型选择计数之外。已有 HTTPS 参考视频输入链路保留。官方生成接口的视频引用要求见 [创建视频生成任务](https://docs.volcengine.com/docs/ark/create-video-generation-task-api?lang=zh)。
-
-## 输入与参数反馈
-
-聊天输入框使用纯文本粘贴、紧凑单行起始高度、随内容增长且限制最大高度。回车立即显示本地发送气泡、清空本次输入和附件，并显示处理中状态；响应到达后合并服务端记录。发送失败保留原消息及附件重试信息，重试前读取服务端状态避免重复发送；等待过程中输入的新草稿不会被响应清空。
-
-生成设置移除画面侧重。Seedance 清晰度支持480p、720p、1080p，所选值持久化并进入生成请求；不支持的清晰度原子拒绝。MiniMax 仍按当前适配器配置显示可用清晰度。时长错误以内联提示呈现，修复预算不再产生叠加浮层。
-
-## Skill 执行及上下文确认
-
-故事中的春季/冬季不触发现实日历或投放地区确认。仅现实应季请求在缺少地区时补充地区；已经给出的国家背景、对白语言各自保留。旧版被无关地区问题阻塞的项目，重新打开时恢复规划并保留项目 ID、对话与视频版本。
-
-上传的 Skill 在生成前另行执行，保存逐步产物、冲突处理和完整最终提示词；检查原文对白并进行独立模型审核。检查未通过或输入变化导致产物失效时禁止提交，不回退成摘要。指纹覆盖 Skill、需求、镜头、参数、人物参考与修复任务。生成适配器直接使用通过检查的完整提示词，合同与历史记录保存 Skill 哈希和实际提交内容哈希；主界面可展开执行产物。模型审核不能保证成片逐条达标，成片仍需质检。旧 V1 提示词不被追改。
-
-## 历史浏览可用性
-
-历史列表与预览直接读取当前会话的已提交存档，不进入规划、Skill 或生成请求的活动项目锁，也不回写活动项目。打开历史页面立即展示列表与加载状态，画布保存、自主代理暂停在后台完成；真正打开项目仍等待草稿保存。读取失败保留现有卡片并自动重试，不将请求失败显示为空项目。
-
-## Skill 与需求的前置整合
-
-存在用户 Skill 时，先以完整 prompt、全部 Skill 文本和参考素材绑定执行并检查 Skill，再将完整处理产物传给创作规划模型。规划必须关联处理产物哈希；失败时不生成仅基于 prompt 的兜底计划，不进入模型选择、人物参考或视频阶段。原始输入和已完成的处理草稿保留，用户在对话中发送“重试”继续，审核超时可复用已完成的 Skill 草稿。旧版未具备前置处理依据的未完成项目恢复为待处理状态，既有数据不删除；原有成片不追改。
-
-Skill 和规划长响应使用流式读取，只有收到完整完成事件才能进入 JSON 检查；断开的半成品不会成为方案。显式对白语言和片长优先于冲突的 Skill 默认值，语言转换保留逐句对应；超时错误使用当前界面语言，不回显底层英文异常。
-
-流式事件按[火山 Responses API 文档](https://docs.volcengine.com/docs/ark/responses-api-text-generation?lang=en)处理：仅输出文本增量参与拼接，推理摘要不进入应用 JSON，必须收到完成事件；失败和未完成事件均终止本轮。
-
-审核发现用户要求之间确有创作冲突时，可形成一条当前语言的取舍问题；工具、网络和格式错误不能伪装成用户信息缺失。回答作为对话上下文进入下一轮 Skill 整合，原始需求保留。
-
-## 追问与需求修改
-
-创作 Agent 区分解释/能力/状态追问和实际修改、选择回答。追问只追加对话，不改变原 prompt 或待确认项，不触发 Skill、人物参考、模型推荐或视频生成。明确的礼貌修改请求仍可进入规划；对话模型暂时失败时也不会将问题兜底当作修改。当前不提供已有视频的时间线剪辑、裁切、拼接或自动多片段制作，文案必须使用“精简剧本/台词”等实际能力。旧版误把明确剪辑能力追问追加到 prompt 的失败记录可恢复原需求，原错误轨迹保留。
-
-## Contextual conversation controller
-
-The composer sends every turn to /api/chat. A model reads the original brief, recent dialogue, accepted decisions, stage and pending question ID before choosing a discussion, answer, update, retry or explicit production confirmation. Answers require the correct question ID; actions require evidence from the current message. Answers are kept separately from the source brief. A character-style answer directly updates character planning. Explicit permission to condense dialogue changes validation to semantic fidelity and source/adaptation coverage. Invalid model JSON is reported as a structured-output error rather than a missing user answer.
-
-## Main Agent identity and compound instructions
-
-The controller and planner use the configured ARK_MODEL (currently doubao-seed-2-1-pro-260915). State responses expose agent_runtime model IDs for inspection. A generation confirmation may carry production choices and previously accepted dialogue policy; these are not mutually exclusive. Explicitly skipping character references sets character_reference_policy=skip, bypasses character planning/image calls and retains the choice across planning retries. Generation still waits for a valid creative plan. Main-Agent request, JSON and action-validation failures are reported as system failures, not language-understanding failures, and retain diagnostics.
-
-## Persistent autonomous-mode switch
-
-The four-point Agent switch above the composer stays visible and operable in brief, planning failure, pending clarification and completed states. Starting autonomy from a preparation state delegates missing creative decisions to the Agent and resumes preparation; successful replanning preserves autonomous mode and continues production. Technical preparation failure pauses instead of repeatedly retrying. Existing accepted policy values echoed by the model are normalized as no-ops for every intent, while genuine new changes still require a suitable action. The plan intent reuses the original brief and accepted decisions rather than appending a planning command to the script.
+画布编辑器、导航、页面脚本、接口和专属存储已移除。首次升级旧数据库时先创建权限为 0600 的完整 SQLite 备份，再移除画布存档及专属图片任务；VCL 项目和人物参考图保留。历史成片和已提交请求不会被重写。

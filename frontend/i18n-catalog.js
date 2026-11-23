@@ -1,8 +1,12 @@
 // Interface copy only. User briefs and model prose are not machine-translated.
 window.I18N_CATALOG = [
+ ["Generate video","生成视频"],
+ ["Creative plan ready","创作规划已完成"],
+ ["The creative plan and complete video prompt are ready. Continue in the Agent.","创作规划与完整视频提示词已就绪，可在对话中继续制作。"],
+ ["Describe your video idea and add your reference materials.","描述你的视频需求，并添加参考素材。"],
  ["Uploaded Skills applied","已执行上传的 Skill"],
  ["Executing uploaded Skills…","正在执行上传的 Skill…"],
- ["Skill execution and final video prompt","Skill 执行产物与最终视频提示词"], ["Skill preparation is incomplete. Video generation is blocked.","Skill 尚未准备完成，不会提交视频生成。"],
+ ["Skill execution and final video prompt","Skill 应用结果与完整视频提示词"], ["Skill preparation is incomplete. Video generation is blocked.","Skill 尚未准备完成，不会提交视频生成。"],
  ["Retry","重试"],
  ["Not sent","未发送"], ["Sending…","发送中…"], ["Agent is thinking…","正在思考…"], ["Each video can be at most 30 seconds.","单条视频最长30秒，请调整时长。"],
  ["Local preview","本地预览"],
@@ -19,8 +23,8 @@ window.I18N_CATALOG = [
  ["Starting production. I will prepare any character references, then generate the video.","开始制作。我会先准备所需的人物参考图，再生成视频。"],
  ["Search projects","搜索项目"], ["No matching projects","没有匹配的项目"],
  ["Project toolbar","项目工具栏"], ["Current project","当前项目"], ["Choose project","选择项目"], ["Untitled project","未命名项目"],
- ["All projects","全部项目"], ["Canvas projects","画布项目"],
- ["Project type","项目类型"], ["Canvas project","画布项目"], ["Create project","创建项目"], ["Optional — Agent names it from your brief","可自行命名；留空则由 Agent 根据需求命名"],
+ ["All projects","全部项目"],
+ ["Project type","项目类型"], ["Create project","创建项目"], ["Optional — Agent names it from your brief","可自行命名；留空则由 Agent 根据需求命名"],
  ["Awaiting creative clarification","等待创意确认"],
  ["Shared style","统一风格"],
  ["Tell the Agent your preferred visual style or clarify its question.","告诉 Agent 你希望统一使用的画面风格，或回答它提出的问题。"],
@@ -1768,21 +1772,21 @@ window.I18N_CATALOG = [
     "The current H3 adapter has no option to disable the audio track.",
     "当前 H3 适配器没有关闭音轨的参数。"
   ]
-  , ["Canvas", "画布"]
+
   , ["Workspace", "工作区"]
   , ["Local workspace", "本地工作区"]
   , ["Local", "本地"]
-  , ["Canvas title", "画布名称"]
-  , ["Untitled canvas", "未命名画布"]
-  , ["Save canvas", "保存画布"]
+
+
+
   , ["Saved", "已保存"]
   , ["Saving…", "保存中…"]
   , ["Project assets", "项目素材"]
   , ["Undo", "撤销"]
   , ["Redo", "重做"]
-  , ["Export canvas", "导出画布"]
-  , ["Import canvas", "导入画布"]
-  , ["Canvas editing area", "画布编辑区"]
+
+
+
   , ["Connections", "连线"]
   , ["Double-click to add a node", "双击添加节点"]
   , ["Add node", "添加节点"]
@@ -1793,13 +1797,13 @@ window.I18N_CATALOG = [
   , ["Video task", "视频任务"]
   , ["Note", "便签"]
   , ["Video version", "视频版本"]
-  , ["Canvas controls", "画布操作"]
+
   , ["Select", "选择"]
   , ["Pan", "平移"]
   , ["Zoom out", "缩小"]
   , ["Zoom in", "放大"]
   , ["Reset zoom", "重置缩放"]
-  , ["Fit canvas", "适应画布"]
+
   , ["Show connections", "显示连线"]
   , ["Duplicate", "复制"]
   , ["Delete", "删除"]
@@ -1815,11 +1819,11 @@ window.I18N_CATALOG = [
   , ["Connect output", "连接输出"]
   , ["Connection", "连线"]
   , ["No project assets yet", "暂无项目素材"]
-  , ["Canvas could not be loaded.", "画布加载失败，请刷新重试。"]
-  , ["Save failed. Export your draft before reloading.", "保存失败，请先导出画布再刷新。"]
-  , ["Canvas changed in another tab. Export your draft before reloading.", "其他标签页已更新画布，请先导出本页再刷新。"]
-  , ["Canvas supports up to 100 nodes.", "最多添加 100 个节点。"]
-  , ["Canvas supports up to 250 connections.", "最多连接 250 条线。"]
+
+
+
+
+
   , ["This connection is not allowed.", "无法连接，请检查方向或重复连线。"]
   , ["Connections cannot form a cycle.", "连线不能形成循环。"]
   , ["Generated videos can be previewed here. Add a public video URL to use one as a reference.", "生成视频可在此预览；作为参考需要添加公网视频链接。"]
@@ -1827,17 +1831,17 @@ window.I18N_CATALOG = [
   , ["Add a brief before sending to the Agent.", "先写下创作需求。"]
   , ["Added to Agent draft", "已加入 Agent 草稿"]
   , ["Wait for the current video before changing references.", "视频正在生成，请稍候。"]
-  , ["This project already has references. Start a new project to use different canvas references.", "当前项目已有参考素材；使用新的画布素材请先重置项目。"]
+
   , ["Reference media is unavailable.", "参考素材不可用。"]
   , ["Too many references for one brief.", "参考素材数量超限。"]
   , ["Use images, MP3 or WAV. Add videos with a public HTTPS URL.", "支持图片和 MP3/WAV；视频请添加公网 HTTPS 链接。"]
   , ["Use a public HTTPS URL and a duration of 2–30 seconds.", "请填写公网 HTTPS 链接和 2–30 秒时长。"]
   , ["Reference filename is too long.", "素材文件名过长。"]
-  , ["Canvas exceeds 32 MB", "画布超过 32 MB。"]
-  , ["Wait for the canvas to save before importing.", "保存完成后再导入。"]
-  , ["Replace this canvas? You can undo this change.", "替换当前画布？可撤销此操作。"]
-  , ["Unsupported canvas file", "画布文件格式不支持。"]
-  , ["Invalid canvas file", "画布文件无效。"]
+
+
+
+
+
   , ["Save failed.", "保存失败。"]
   , ["Model comparison", "模型对比"]
   , ["Image generation", "图片生成"]
@@ -1867,7 +1871,7 @@ window.I18N_CATALOG = [
   , ["Image generation failed. Check the model configuration or Ark console; no automatic retry was submitted.", "生图失败，请检查模型配置或方舟控制台；未自动重试。"]
   , ["Generation status is uncertain. Check the Ark console before retrying; no automatic retry was submitted.", "生成状态未确认，请先查看方舟控制台；未自动重试。"]
   , ["Service restarted during generation. Check the Ark console before retrying; no automatic retry was submitted.", "服务在生成期间重启，请先查看方舟控制台；未自动重试。"]
-  , ["Describe your idea, or send content from the canvas.", "描述你的想法，或从画布传入内容。"]
+
   , ["Draft saved automatically", "草稿已自动保存"]
   , ["Saving draft…", "草稿保存中…"]
   , ["Draft save interrupted. Retrying automatically.", "草稿保存中断，正在自动重试。"]
@@ -1879,7 +1883,7 @@ window.I18N_CATALOG = [
   , ["Which country or region is this video for?", "这个视频主要面向哪个国家或地区？"]
   , ["This idea works better as several clips. Which part would you like to start with?", "这个想法适合拆成几段视频。你想先做哪一段？"]
   , ["Your update is saved for the next version.", "修改已记下，将用于下一个版本。"]
-  , ["Doubao Seed 2.1 Pro converted this brief into a structured control plan. Review the budget before approving it.", "Doubao Seed 2.1 Pro 已根据需求整理方案，请查看后确认修复预算。"]
+  , ["Doubao Seed 2.1 Pro converted this brief into a structured control plan. Review the budget before approving it.", "Doubao Seed 2.1 Pro 已根据 Skill 与需求完成创作规划。"]
   , ["A local recovery plan was built from the submitted brief because no live planning model is available to the local server.", "规划模型暂不可用，当前展示根据需求整理的备用方案。"]
   , ["Agent checked capability_router before compiling the control plan.", "已根据创作需求检查可用能力。"]
   , ["Doubao Seed 2.1 Pro did not return a valid executable control plan for this request (§0§); the Agent is showing a clearly labelled local recovery plan instead.", "Doubao Seed 2.1 Pro 未返回有效方案（§0§），当前展示备用方案。"]

@@ -81,14 +81,12 @@ class ArkMigrationTests(unittest.TestCase):
         self.assertIn('remaining_budget',call.call_args.args[3])
         self.assertIn('atomic_checks',call.call_args.args[3]['report'])
 
-    def test_plan_retry_receives_the_specific_schema_failure(self):
+    def test_plan_conversion_failure_does_not_repeat_the_entire_model_request(self):
         planner=ArkControlPlanner(api_key='test-key')
-        expected=create_demo_state().creative_spec
-        with patch.object(planner,'_request_json',return_value={}) as request, patch.object(planner,'_to_spec',side_effect=[ValueError('production_direction.camera_language must be concise non-empty text'),expected]):
-            self.assertIs(planner.plan('A red car stops.'),expected)
-        self.assertEqual(request.call_count,2)
-        self.assertIn('at most 260 characters',request.call_args_list[0].args[0])
-        self.assertIn('production_direction.camera_language must be concise',request.call_args_list[1].args[0])
+        with patch.object(planner,'_request_json',return_value={}) as request,patch.object(planner,'_to_spec',side_effect=ValueError('missing shots')):
+            with self.assertRaisesRegex(ValueError,'missing shots'):planner.plan('A red car stops.')
+        request.assert_called_once()
+        self.assertNotIn('at most 260 characters',request.call_args.args[0])
 
     def test_reference_pixels_and_reference_governance_are_retained(self):
         content=[{'type':'input_text','text':'Reference R1; only evaluate bound criteria. Return JSON.'}, {'type':'input_image','image_url':'data:image/png;base64,test'}]

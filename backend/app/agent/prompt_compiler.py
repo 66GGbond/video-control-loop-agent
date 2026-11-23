@@ -69,6 +69,7 @@ class PromptCompiler:
         control_plan_id = spec.control_plan_id or self._stable_id("control", {
             "project": state.project_id,
             "source_prompt": spec.source_prompt,
+            "video_prompt": spec.enriched_context.get("video_prompt", ""),
             "shots": spec.shots,
             "constraints": spec.immutable_character_attributes,
             "production_direction": spec.production_direction,
@@ -78,8 +79,6 @@ class PromptCompiler:
         compile_run_id = self._stable_id("compile", {
             "control_plan_id": control_plan_id,
             "target_version": target_version,
-            'skill_execution':spec.enriched_context.get('skill_execution',{}).get('prompt_sha256'),
-            'skill_brief':spec.enriched_context.get('skill_brief',{}).get('prompt_sha256'),
             "repair_delta": repair_delta,
             "output": output,
             "duration_plan": duration_plan,
@@ -96,8 +95,7 @@ class PromptCompiler:
             "compile_run_id": compile_run_id,
             "control_plan_id": control_plan_id,
             "target_version_id": target_version,
-            'skill_execution':dict(spec.enriched_context.get('skill_execution',{})),
-            'skill_brief':dict(spec.enriched_context.get('skill_brief',{})),
+            "video_prompt": spec.enriched_context.get("video_prompt", ""),
             "objective": spec.goal,
             "shot_plan": [dict(shot) for shot in timeline],
             "duration_plan": duration_plan,

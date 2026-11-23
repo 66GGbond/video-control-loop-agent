@@ -142,13 +142,6 @@ class ChatTurnHTTPTests(unittest.TestCase):
         self.assertTrue(data['conversation_only']);self.assertEqual(data['status'],state.status)
         self.assertEqual(data['creative_spec']['source_prompt'],'原始剧本')
 
-    def test_unified_chat_rejects_unbound_answer_without_starting_any_work(self):
-        visitor=self.session();state=create_demo_state('原始剧本');self.store.save(visitor,state)
-        decision={'intent':'answer','question_id':'invented','summary':'擅自修改','evidence':'好的','dialogue_edit_policy':None,'reply':''}
-        with patch.dict(os.environ,{'ARK_API_KEY':'offline'}),patch('backend.app.chat_turns.request_json',return_value=decision),patch.object(local.server,'create_enriched_project_state') as planning:
-            status,data=self.request('/api/chat',{'message':'好的'})
-        self.assertTrue(data['conversation_only']);planning.assert_not_called()
-
     def test_question_does_not_start_skill_planning_images_or_video(self):
         visitor=self.session();state=create_demo_state('英语对白，30秒。');state.status='awaiting_skill_clarification'
         state.creative_spec.enriched_context['skill_clarification']={'question':'是否允许精简台词？'}

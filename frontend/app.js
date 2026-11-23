@@ -690,12 +690,12 @@ function renderProjectStatus(state) {
     context: ["Creative Agent needs one decision", "A missing context field could change a high-impact generation constraint.", "Context", "Answer the Agent"],
     plan: state.status === "needs_segmentation"
       ? ["Multi-segment plan required", "The Agent determined this brief should not be compressed into one 30-second clip. Revise the brief or plan separate segments.", "Segment plan", "Revise brief"]
-      : ["Control plan ready for approval", "Review the Agent's planned shots, constraints, risks, and bounded repair budget.", "Plan ready", "Approve control plan"],
+      : ["Creative plan ready", "The creative plan and complete video prompt are ready. Continue in the Agent.", "Plan ready", "Generate video"],
     characters: ["Character reference stage", "Prepare three views of the important characters before video generation.", "Character references", "Generate three views"],
     version: ["Video version in production", "The approved plan is being rendered or prepared as evidence for evaluation.", "Version", "Wait for video evidence"],
     quality: ["Quality control loop active", "Review the selected version, its evidence-backed quality result, and the Agent's next decision.", "Quality", "Review version result"],
   };
-  if(characterPlan?.status==='ready')labels.characters=["Control plan ready for approval","Character references attached to video","Plan ready","Generate V1"];
+  if(characterPlan?.status==='ready')labels.characters=["Creative plan ready","Character references attached to video","Plan ready","Generate V1"];
   const [title, copy, badge, next] = labels[stage];
   document.querySelector("#project-status-title").textContent = title;
   document.querySelector("#project-status-copy").textContent = copy;
@@ -717,7 +717,7 @@ function executionTraceEntries(state) {
   const spec = state.creative_spec || {};
   const context = spec.enriched_context || {};
   const entries = [];
-  if(context.skill_brief?.status==='verified')entries.push({kind:'skill',title:'Uploaded Skills applied',detail:context.skill_brief.applied_skills.join(' · ')});
+  if(context.skill_application?.length)entries.push({kind:'skill',title:'Uploaded Skills applied',detail:(context.uploaded_skills||[]).map(s=>s.path).join(' · ')});
   if (spec.source_prompt || spec.goal) {
     entries.push({
       kind: "brief",
@@ -820,7 +820,6 @@ function renderConversation(state) {
   renderedConversation=signature;
   log.replaceChildren();
   for(const message of messages) {
-    if(['plan_ready','plan_updated'].includes(message.kind))continue;
     if(message.kind==='creative_clarification'){
       const index=messages.indexOf(message),previousUser=messages.slice(0,index).findLastIndex(m=>m.role==='user');
       if(messages.slice(previousUser+1,index).some(m=>m.kind==='creative_clarification'))continue;
@@ -1256,9 +1255,10 @@ function renderReferenceMedia(spec) {
 function render(state) {
   renderedState = state;
   if(state.conversation_only){renderCreativeAgent(state,state.creative_spec,state.creative_spec.enriched_context||{});return;}
-  const execution=state.creative_spec.enriched_context?.skill_execution||state.creative_spec.enriched_context?.skill_brief;
-  const skillResult=document.querySelector('#skill-execution-result');skillResult.hidden=!execution;
-  document.querySelector('#skill-execution-copy').textContent=execution?.status==='verified'?((execution.execution_steps||[]).map(s=>s.step+'\n'+s.result).join('\n\n')+'\n\n'+(execution.conflicts||[]).join('\n')+'\n\n'+execution.optimized_prompt):I18n.text('Skill preparation is incomplete. Video generation is blocked.');
+  const context=state.creative_spec.enriched_context||{};
+  const skillResult=document.querySelector('#skill-execution-result');
+  skillResult.hidden=!context.video_prompt;
+  document.querySelector('#skill-execution-copy').textContent=(context.skill_application||[]).map(step=>typeof step==='string'?step:JSON.stringify(step)).join('\n\n')+'\n\n'+(context.video_prompt||'');
   renderModelSelection(state);
   renderCharacterReferences(state);
   scheduleProductionDefaults(state);
@@ -1550,12 +1550,13 @@ async function submitChat(event) {
     if(!isInitialBrief&&files.length&&!outgoing.imported){render(await endpoint('/api/import-references',{method:'POST',body:JSON.stringify(await serializeImports(prompt,files))}));outgoing.imported=true;}
     const imports=isInitialBrief?await serializeImports(prompt,files):{};
     render(await endpoint('/api/chat',{method:'POST',body:JSON.stringify({message:prompt,...imports,language:I18n.language})}));
+    accepted=true;chatOutbox=chatOutbox.filter(item=>item!==outgoing);renderConversation(renderedState);
     if(renderedState.chat_action==='generate')await generateVideo(null,true);
     else if(renderedState.chat_action==='quality')await runQualityLoop();
     else if(renderedState.chat_action==='retry_evidence')await prepareGeneratedEvidence(renderedState);
     accepted=true;
     if(!renderedState.conversation_only&&autopilotIsRunning(renderedState))await advanceAutopilot(renderedState);
-    if (!renderedState.conversation_only&&["planning_ready", "awaiting_first_video", "awaiting_repair_upload"].includes(renderedState.status)) await recommendCurrentVideoModel();
+
   } catch (error) {
     outgoing.failed=true;
   } finally {
@@ -1591,7 +1592,6 @@ function setCreativeAgentOpen(open, focus = false) {
   panel.inert=!open;
   document.body.classList.toggle("agent-open", open);
   capsule.hidden=open;
-  document.querySelector('.canvas-header-actions').inert=open;
   capsule.setAttribute("aria-expanded", String(open));
   capsule.setAttribute("aria-label", open ? "Minimize Creative Agent" : "Open Creative Agent");
   if (focus && open) requestAnimationFrame(()=>promptEditor().focus());
@@ -1783,10 +1783,7 @@ document.querySelector("#generate-repair").addEventListener("click", event => {
   }
   generateVideo(event);
 });
-window.openNewProject=(kind='vcl',choose=false)=>{
-  document.querySelector('#new-project-kind').value=kind;
-  document.querySelector('#new-project-kind').hidden=!choose;
-  document.querySelector('#new-project-kind-label').hidden=!choose;
+window.openNewProject=()=>{
   document.querySelector('#new-project-name').value='';
   document.querySelector('#new-project-dialog').showModal();document.querySelector('#new-project-name').focus();
 };
@@ -1795,10 +1792,9 @@ document.querySelector('#new-project-cancel').addEventListener('click',()=>docum
 document.querySelector('#new-project-form').addEventListener('submit',async event=>{
   event.preventDefault();const button=event.submitter;button.disabled=true;
   try{
-    await window.CanvasImages.flush();
-    const kind=document.querySelector('#new-project-kind').value,title=document.querySelector('#new-project-name').value.trim();
-    await endpoint(kind==='canvas'?'/api/new-canvas':'/api/reset',{method:'POST',body:JSON.stringify({title})});
-    location.assign('/?new='+Date.now()+'#'+kind);
+    const title=document.querySelector('#new-project-name').value.trim();
+    await endpoint('/api/reset',{method:'POST',body:JSON.stringify({title})});
+    location.assign('/?new='+Date.now()+'#vcl');
   }catch(error){I18n.alert(error.message);button.disabled=false;}
 });
 
@@ -1812,33 +1808,5 @@ window.addEventListener("languagechange", () => {
   drawTrend(document.querySelector("#trend-canvas"), reports, Number(report.rubric_profile?.overall_floor || 3));
 });
 
-// Canvas hands a reviewable draft to the same composer; it never calls a paid provider.
-window.VCLBridge = {
-  state:()=>renderedState,
-  open:()=>setCreativeAgentOpen(true,true),
-  readMedia:async file=>isImageReference(file)?readReferenceFile(file):readAudioReferenceFile(file),
-  async stage({text,assets}) {
-    if(renderedState?.status==='generating_video') throw new Error('Wait for the current video before changing references.');
-    if(renderedState?.status!=='ready_for_brief' && assets.length) throw new Error('This project already has references. Start a new project to use different canvas references.');
-    const names=new Set(selectedReferenceItems.map(file=>file.name.toLowerCase()));
-    const additions=[];
-    for(const asset of assets) {
-      if(names.has(asset.name.toLowerCase())) throw new Error('Reference filenames must be unique.');
-      names.add(asset.name.toLowerCase());
-      if(asset.media_type==='video') additions.push({name:asset.name,type:asset.mime_type,size:0,lastModified:0,reference_url:asset.url,duration_seconds:asset.duration_seconds});
-      else {
-        const value=asset.data_url||asset.preview_data_url;
-        if(!value?.startsWith(asset.media_type==='image'?'data:image/':'data:audio/')) throw new Error('Reference media is unavailable.');
-        const blob=await (await fetch(value)).blob();
-        additions.push(new File([blob],asset.name,{type:asset.mime_type,lastModified:0}));
-      }
-    }
-    const all=[...selectedReferenceItems,...additions];
-    if(all.filter(isImageReference).length>30 || all.filter(isAudioReference).length>10 || all.filter(isVideoReference).length>10) throw new Error('Too many references for one brief.');
-    selectedReferenceItems=all;
-    const existing=editorText().trim();
-    setEditorText(existing?existing+'\n\n'+text:text);
-    renderReferenceAttachments();
-    setCreativeAgentOpen(true,true);
-  }
-};
+// Shared project state for navigation and history.
+window.VCLBridge={state:()=>renderedState,open:()=>setCreativeAgentOpen(true,true)};
