@@ -116,6 +116,12 @@ class ArkVideoGenerator:
         include_output_hints: bool = True,
     ) -> str:
         spec = state.creative_spec
+        if spec.enriched_context.get('uploaded_skills'):
+            from ..skill_execution import fingerprint
+            execution=spec.enriched_context.get('skill_execution',{})
+            if execution.get('status')!='verified' or execution.get('fingerprint')!=fingerprint(state,repair_task):
+                raise ValueError('上传的 Skill 尚未执行完成或已失效，不能提交摘要提示词。')
+            return execution['optimized_prompt'] + ArkVideoGenerator._character_binding(state)
         contract = spec.generation_contract or {}
         if contract.get("generation_contract_id"):
             output = validate_generation_spec(contract.get("output_spec"))

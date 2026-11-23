@@ -1255,6 +1255,9 @@ function renderReferenceMedia(spec) {
 
 function render(state) {
   renderedState = state;
+  const execution=state.creative_spec.enriched_context?.skill_execution;
+  const skillResult=document.querySelector('#skill-execution-result');skillResult.hidden=!execution;
+  document.querySelector('#skill-execution-copy').textContent=execution?.status==='verified'?((execution.execution_steps||[]).map(s=>s.step+'\n'+s.result).join('\n\n')+'\n\n'+(execution.conflicts||[]).join('\n')+'\n\n'+execution.optimized_prompt):I18n.text('Skill preparation is incomplete. Video generation is blocked.');
   renderModelSelection(state);
   renderCharacterReferences(state);
   scheduleProductionDefaults(state);
@@ -1725,7 +1728,8 @@ async function generateVideo(event, authorized=false) {
     pollGeneration();
   } catch (error) {
     button.disabled = false;
-    I18n.alert(error.message);
+    try{render(await endpoint('/api/state'));}catch(_){}
+    const notice=document.createElement('article');notice.className='agent-message agent-message-system';notice.textContent=I18n.text(error.message);document.querySelector('#agent-conversation').append(notice);
   } finally {videoStartPending=false;}
 }
 function autopilotIsRunning(state) {

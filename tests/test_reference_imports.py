@@ -28,6 +28,18 @@ class ImportHTTPTests(unittest.TestCase):
     request=local.LocalServerTests.request
     session=local.LocalServerTests.session
 
+    def test_legacy_story_region_gate_resumes_same_project_without_generation(self):
+        visitor=self.session();state=create_demo_state('1784年英国春季，中文对白，画眉田庄卧室。');state.status='awaiting_context_confirmation'
+        state.conversation=[{'role':'user','text':state.creative_spec.source_prompt},{'role':'assistant','kind':'context_question','text':'Which region?'}]
+        self.store.save(visitor,state)
+        replanned=create_demo_state(state.creative_spec.source_prompt)
+        with patch.object(server,'create_enriched_project_state',return_value=replanned),patch.object(server.VIDEO_GENERATOR,'submit') as paid:
+            status,data=self.request('/api/state')
+        self.assertEqual(status,200,data);paid.assert_not_called()
+        self.assertEqual(data['project_id'],state.project_id)
+        self.assertEqual(data['status'],'planning_ready')
+        self.assertFalse(any(m.get('kind')=='context_question' for m in data['conversation']))
+
     def test_append_images_skills_and_local_preview_preserves_existing_video(self):
         visitor=self.session();state=create_demo_state('Cowboy film');state.status='published'
         state.current_video_asset={'name':'original.mp4'};self.store.save(visitor,state)

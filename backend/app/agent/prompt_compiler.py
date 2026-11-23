@@ -78,6 +78,7 @@ class PromptCompiler:
         compile_run_id = self._stable_id("compile", {
             "control_plan_id": control_plan_id,
             "target_version": target_version,
+            'skill_execution':spec.enriched_context.get('skill_execution',{}).get('prompt_sha256'),
             "repair_delta": repair_delta,
             "output": output,
             "duration_plan": duration_plan,
@@ -94,6 +95,7 @@ class PromptCompiler:
             "compile_run_id": compile_run_id,
             "control_plan_id": control_plan_id,
             "target_version_id": target_version,
+            'skill_execution':dict(spec.enriched_context.get('skill_execution',{})),
             "objective": spec.goal,
             "shot_plan": [dict(shot) for shot in timeline],
             "duration_plan": duration_plan,

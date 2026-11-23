@@ -22,11 +22,22 @@ def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
     return any(term in lowered for term in terms)
 
 
+def explicit_market(prompt):
+    countries={'英国':('英国','united kingdom','britain','england'),'中国':('中国','china'),'美国':('美国','united states'),'新加坡':('新加坡','singapore'),'澳大利亚':('澳大利亚','australia'),'日本':('日本','japan')}
+    matches=[name for name,words in countries.items() if _contains_any(prompt,words)]
+    return matches[0] if len(matches)==1 else ''
+
+
+def requires_market_confirmation(prompt,target_market=''):
+    realtime=_contains_any(prompt,('seasonal','in season','current season','应季','当季','当前季节','本季营销','今年节日'))
+    return realtime and not (target_market or explicit_market(prompt))
+
+
 class ContextEnrichmentAgent:
     """Suggest and execute a small allow-listed set of enrichment tools.
 
     A live LLM may suggest optional tool calls, but hard safety conditions are
-    enforced locally: a seasonal claim without a market always asks the user;
+    enforced locally: only a current-season regional request may need a market;
     visual reference facts are never fabricated when no vision tool is present.
     """
 
@@ -62,7 +73,9 @@ class ContextEnrichmentAgent:
         target_market = (target_market or "").strip()
         asset_manifest = build_asset_manifest(multimodal_assets or ([reference_asset] if reference_asset else []))
         suggested = self._suggest_tools(prompt, bool(reference_asset), bool(target_market))
-        seasonal_request = _contains_any(prompt, SEASON_TERMS)
+        # Story seasons are supplied creative facts, not a request for today's weather.
+        seasonal_request = _contains_any(prompt, ('seasonal','in season','current season','应季','当季','当前季节','本季营销','今年节日'))
+        if seasonal_request and not target_market:target_market=explicit_market(prompt)
         short_form_request = _contains_any(prompt, SHORT_FORM_TERMS)
         tool_names = {item.get("tool") for item in suggested if isinstance(item, dict)}
         # A model can only choose from the registered tools; code also verifies

@@ -55,6 +55,7 @@ function scheduleProductionDefaults(state) {
   productionDefaultsTimer=setTimeout(async()=>{
     try{await prepareCharacterReferences();}catch(_){/* Inline retry; never automatically repeat a failed planning request. */}
     try{await recommendCurrentVideoModel();}catch(error){document.querySelector('#settings-status').textContent=I18n.text(error.message);}
+    if(renderedState.creative_spec.enriched_context?.uploaded_skills?.length&&renderedState.creative_spec.character_reference_plan?.status!=='awaiting_clarification'){document.querySelector('#settings-status').textContent=I18n.text('Executing uploaded Skills…');try{render(await endpoint('/api/prepare-skill-prompt',{method:'POST',body:'{}'}));}catch(error){document.querySelector('#settings-status').textContent=I18n.text(error.message);try{render(await endpoint('/api/state'));}catch(_){}}}
   },0);
 }
 async function attachCharacterReferences() {

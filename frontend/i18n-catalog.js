@@ -1,5 +1,7 @@
 // Interface copy only. User briefs and model prose are not machine-translated.
 window.I18N_CATALOG = [
+ ["Executing uploaded Skills…","正在执行上传的 Skill…"],
+ ["Skill execution and final video prompt","Skill 执行产物与最终视频提示词"], ["Skill preparation is incomplete. Video generation is blocked.","Skill 尚未准备完成，不会提交视频生成。"],
  ["Retry","重试"],
  ["Not sent","未发送"], ["Sending…","发送中…"], ["Agent is thinking…","正在思考…"], ["Each video can be at most 30 seconds.","单条视频最长30秒，请调整时长。"],
  ["Local preview","本地预览"],

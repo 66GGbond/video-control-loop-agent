@@ -123,6 +123,16 @@ class AgentLoopTests(unittest.TestCase):
         self.assertIn("ceramic fox lantern", state.creative_spec.shots[0]["intent"])
         self.assertIn("submitted brief", state.creative_spec.planning_notice)
 
+    def test_story_season_and_supplied_country_do_not_trigger_market_question(self):
+        agent=ContextEnrichmentAgent()
+        for text in ['1784年英国，春季星期日下午，画眉田庄卧室，中文对白。','A British drama set in spring. Spoken English.', '春季的卧室，角色相拥。']:
+            context=agent.enrich(text)
+            self.assertEqual(context['status'],'ready_for_compile')
+            self.assertFalse(any(q['id']=='target_market' for q in context['open_questions']))
+            self.assertFalse(any(o['tool']=='calendar_context' for o in context['tool_observations']))
+        supplied=agent.enrich('英国当季护肤广告')
+        self.assertEqual(supplied['status'],'ready_for_compile')
+
     def test_context_agent_requests_market_only_for_high_impact_seasonal_brief(self):
         agent = ContextEnrichmentAgent()
         missing_market = agent.enrich("Create a current seasonal skincare campaign.")

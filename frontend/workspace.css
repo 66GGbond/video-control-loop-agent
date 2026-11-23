@@ -206,3 +206,6 @@ body[data-workspace=history] #creative-agent,body[data-workspace=history] #creat
 @media(prefers-reduced-motion:reduce){.chat-working{animation:none}}
 .compact-budget-control[data-tooltip]::after {display:none!important}
 .composer-validation {margin:4px 12px 10px;color:var(--red);font-size:12px}
+#skill-execution-result {margin:16px 0;padding:16px 20px}
+#skill-execution-result summary {cursor:pointer;font-weight:600}
+#skill-execution-copy {white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.7;margin-top:16px}

@@ -23,6 +23,8 @@ from urllib.parse import urlparse, parse_qs
 from urllib import request as urllib_request
 
 from .sessions import SessionStore
+from .agent.context import requires_market_confirmation
+from .skill_execution import prepare as prepare_skill_prompt
 from .reference_imports import skill_files
 from .conversation import record_exchange
 from .agent.planner import ArkControlPlanner
@@ -208,6 +210,16 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 return self._json(HTTPStatus.NOT_FOUND, {'error':'Project preview unavailable'})
             self.send_response(HTTPStatus.OK);self.send_header('Content-Type',result[0]);self.send_header('Content-Length',str(len(result[1])));self.send_header('Cache-Control','private, no-cache');self.end_headers();self.wfile.write(result[1]);return
         if path == "/api/state":
+            if self.state.status=='awaiting_context_confirmation' and not requires_market_confirmation(self.state.creative_spec.source_prompt):
+                original=self.state
+                resumed=create_enriched_project_state(original.creative_spec.source_prompt,characters.source_reference(original.creative_spec),CONTROL_PLANNER,CONTEXT_AGENT,multimodal_assets=characters.source_assets(original.creative_spec),ui_language=original.creative_spec.enriched_context.get('ui_language','zh'),uploaded_skills=original.creative_spec.enriched_context.get('uploaded_skills',[]))
+                resumed.project_id=original.project_id;resumed.project_name=original.project_name
+                resumed.conversation=list(original.conversation)
+                if resumed.conversation and resumed.conversation[-1].get('kind')=='context_question':resumed.conversation.pop()
+                for field in ('current_version_id','current_video_asset','version_reviews','generation_jobs','evaluation_history','iterations_used'):
+                    setattr(resumed,field,getattr(original,field))
+                resumed.history=[*original.history,*resumed.history]
+                self.state=resumed
             return self._json(HTTPStatus.OK, present(self.state))
         if path == "/api/character-references":
             characters.sync(self.state, SESSIONS, self.visitor_id)
@@ -319,6 +331,14 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 return self._json(HTTPStatus.OK, present(self.state))
             if path in {"/api/create-project", "/api/reset"} and self.state.status == "generating_video":
                 return self._json(HTTPStatus.CONFLICT, {"error": "A video is being generated. Please wait for the result."})
+            if path == '/api/prepare-skill-prompt':
+                if self.state.status not in {'planning_ready','awaiting_first_video','awaiting_repair_upload'}:raise ValueError('请先完成当前方案。')
+                if self.state.creative_spec.character_reference_plan.get('status')=='awaiting_clarification':return self._json(200,present(self.state))
+                repair=self.state.latest_repair_task if self.state.status=='awaiting_repair_upload' else None
+                PROMPT_COMPILER.compile(self.state,repair)
+                prepare_skill_prompt(self.state,repair)
+                PROMPT_COMPILER.compile(self.state,repair)
+                return self._json(200,present(self.state))
             if path == '/api/import-references':
                 if self.state.status in {'generating_video','generated_video_ready'} or characters.running(self.state,SESSIONS,self.visitor_id):
                     raise ValueError('请等待当前生成任务完成后再追加参考素材。')
@@ -517,6 +537,8 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "The Agent must create a repair task before generating the next version"})
                 version_id = "v1" if self.state.current_version_id == "none" else self._next_version_id(self.state.current_version_id)
                 PROMPT_COMPILER.compile(self.state, self.state.latest_repair_task if repairing else None, version_id)
+                if prepare_skill_prompt(self.state,self.state.latest_repair_task if repairing else None):
+                    PROMPT_COMPILER.compile(self.state,self.state.latest_repair_task if repairing else None,version_id)
                 if not VIDEO_GENERATOR.available():
                     raise ValueError("Video generation is not configured. Check your local model settings.")
                 selection = VIDEO_GENERATOR.select_tool(self.state)
@@ -556,6 +578,8 @@ class DemoHandler(SimpleHTTPRequestHandler):
                             f"{self.state.creative_spec.generation_spec.get('aspect_ratio', 'planned')} "
                             f"at {self.state.creative_spec.generation_spec.get('quality_target', 'planned')} clarity."
                         ),
+                        "skill_execution": self.state.creative_spec.enriched_context.get('skill_execution'),
+                        "submitted_prompt_sha256": hashlib.sha256(job.prompt.encode()).hexdigest(),
                         "tool": job.tool_name,
                         "provider": job.provider_id,
                         "model": job.model_id,
