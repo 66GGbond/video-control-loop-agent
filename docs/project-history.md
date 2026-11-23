@@ -57,3 +57,7 @@ Skill 和规划长响应使用流式读取，只有收到完整完成事件才�
 ## Contextual conversation controller
 
 The composer sends every turn to /api/chat. A model reads the original brief, recent dialogue, accepted decisions, stage and pending question ID before choosing a discussion, answer, update, retry or explicit production confirmation. Answers require the correct question ID; actions require evidence from the current message. Answers are kept separately from the source brief. A character-style answer directly updates character planning. Explicit permission to condense dialogue changes validation to semantic fidelity and source/adaptation coverage. Invalid model JSON is reported as a structured-output error rather than a missing user answer.
+
+## Main Agent identity and compound instructions
+
+The controller and planner use the configured ARK_MODEL (currently doubao-seed-2-1-pro-260915). State responses expose agent_runtime model IDs for inspection. A generation confirmation may carry production choices and previously accepted dialogue policy; these are not mutually exclusive. Explicitly skipping character references sets character_reference_policy=skip, bypasses character planning/image calls and retains the choice across planning retries. Generation still waits for a valid creative plan. Main-Agent request, JSON and action-validation failures are reported as system failures, not language-understanding failures, and retain diagnostics.

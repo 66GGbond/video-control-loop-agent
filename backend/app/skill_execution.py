@@ -42,6 +42,7 @@ def failure_message(error, language='zh'):
 
 def brief_signature(prompt,skills,assets,language='zh',answers=None,requirements=None):
     answers=[a for a in (answers or []) if isinstance(a,dict) and a.get('kind')!='character']
+    requirements={k:v for k,v in (requirements or {}).items() if k not in {'character_reference_policy','generation_requested'}}
     return hashlib.sha256(json.dumps({'policy':POLICY_VERSION,'brief':prompt,'skills':skills,'assets':reference_inputs(assets),'language':language,**({'answers':answers} if answers else {}),**({'requirements':requirements} if requirements else {})},sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 
 def reference_inputs(assets):

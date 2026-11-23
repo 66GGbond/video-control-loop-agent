@@ -48,6 +48,9 @@ def source_reference(spec):
 
 def assess(state):
     spec = state.creative_spec
+    if spec.enriched_context.get('resolved_requirements',{}).get('character_reference_policy')=='skip':
+        spec.character_reference_plan={'id':'user-skipped','schema_version':2,'required':False,'status':'skipped','characters':[],'questions':[],'source':'user'}
+        return spec.character_reference_plan
     if state.status not in EDITABLE or not spec.shots:
         raise ValueError('请先生成脚本，再规划人物参考。')
     autonomous = state.execution_mode == 'autopilot' and not state.autopilot_paused
@@ -230,6 +233,7 @@ def attach(state, store, visitor, payload, normalise):
 
 
 def ensure_ready(state):
+    if state.creative_spec.enriched_context.get('resolved_requirements',{}).get('character_reference_policy')=='skip':return
     plan = state.creative_spec.character_reference_plan
     if plan.get('status')=='awaiting_clarification':
         raise ValueError('请先在创作 Agent 对话中确认关键创意问题。')

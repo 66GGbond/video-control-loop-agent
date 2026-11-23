@@ -28,7 +28,8 @@ from .skill_execution import prepare as prepare_skill_prompt
 from .skill_execution import PREPARATION_STATES, has_prepared_brief, require_prepared_brief, clarify_failure
 from .reference_imports import skill_files
 from .conversation import record_exchange
-from .chat_turns import respond as respond_to_question,recover_editing_question,decide as decide_chat_turn,record_reply,reconcile_last_answer
+from .chat_turns import respond as respond_to_question,recover_editing_question,decide as decide_chat_turn,record_reply,reconcile_last_answer,failure_reply,recover_last_command
+from .tools.ark_responses import configured_model
 from .agent.planner import ArkControlPlanner
 from .agent.context import ContextEnrichmentAgent
 from .agent.generation_spec import validate_brief_duration
@@ -264,6 +265,10 @@ class DemoHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         try:
+            if path=='/api/recover-last-command':
+                if characters.running(self.state,SESSIONS,self.visitor_id):raise ValueError('请等待当前图片任务完成。')
+                if not recover_last_command(self.state):raise ValueError('没有可安全恢复的指令。')
+                return self._json(200,{**present(self.state),'conversation_only':True})
             if path=='/api/reconcile-last-answer':
                 if not reconcile_last_answer(self.state):raise ValueError('没有可安全校正的已保存回答。')
                 return self._json(200,{**present(self.state),'conversation_only':True})
@@ -271,15 +276,25 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 body=self._read_json();text=str(body.get('message','')).strip();language=body.get('language','zh')
                 if not text:raise ValueError('请输入消息。')
                 try:decision=decide_chat_turn(self.state,text,language)
-                except (ValueError,OSError,KeyError,TypeError):
-                    record_reply(self.state,text,'这条消息暂时未能完成理解，你的需求和待确认问题都没有改变，请重发这条消息。' if language!='en' else 'I could not interpret this turn. Your brief and pending choice are unchanged; please resend it.')
+                except (ValueError,OSError,KeyError,TypeError) as error:
+                    self.state.creative_spec.enriched_context.setdefault('chat_errors',[]).append({'model':configured_model(),'type':type(error).__name__,'detail':str(error)[:300]})
+                    record_reply(self.state,text,failure_reply(error,language))
                     return self._json(200,{**present(self.state),'conversation_only':True})
                 self.chat_decision=decision;intent=decision['intent']
                 if intent=='discuss':
                     record_reply(self.state,text,decision['reply']);return self._json(200,{**present(self.state),'conversation_only':True})
                 if intent=='brief' and self.state.status!='ready_for_brief':raise ValueError('已有项目中的新需求应作为修改处理。')
+                if decision.get('character_reference_policy')=='skip' and characters.running(self.state,SESSIONS,self.visitor_id):raise ValueError('人物图片请求已在处理中；请等待结果后再调整生产步骤。')
+                requirements=self.state.creative_spec.enriched_context.setdefault('resolved_requirements',{})
+                for field in ('dialogue_edit_policy','character_reference_policy'):
+                    if decision.get(field):requirements[field]=decision[field]
+                if decision.get('character_reference_policy')=='skip':
+                    characters.assess(self.state)
                 if intent in {'confirm_generation','confirm_quality'}:
-                    path='/api/confirm-generation';body={'message':text,**({'action':'quality'} if intent=='confirm_quality' else {})};self.chat_action='quality' if intent=='confirm_quality' else 'generate'
+                    if intent=='confirm_generation' and self.state.status in PREPARATION_STATES:
+                        requirements['generation_requested']=True;path='/api/revise-brief';body={'instruction':text,'language':language}
+                    else:
+                        path='/api/confirm-generation';body={'message':text,**({'action':'quality'} if intent=='confirm_quality' else {})};self.chat_action='quality' if intent=='confirm_quality' else 'generate'
                 elif intent=='answer' and decision['pending_question']['kind']=='context':path='/api/confirm-context';body={'target_market':text,'language':language}
                 elif intent=='retry' and self.state.status=='generated_video_ready':
                     record_reply(self.state,text,'正在重新准备已生成视频的质检画面。');self.chat_action='retry_evidence'
@@ -528,7 +543,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     import re
                     original=self.state;spec=original.creative_spec;context=spec.enriched_context
                     turn=getattr(self,'chat_decision',{})
-                    retry=turn.get('intent')=='retry' if turn else bool(re.fullmatch(r'(?:重试|继续|重新处理|重新规划|retry|continue)[。！!,.\s]*',instruction,re.I))
+                    retry=turn.get('intent') in {'retry','confirm_generation'} if turn else bool(re.fullmatch(r'(?:重试|继续|重新处理|重新规划|retry|continue)[。！!,.\s]*',instruction,re.I))
                     if original.status=='awaiting_skill_clarification' and retry:return self._json(200,present(self.state))
                     is_answer=turn.get('intent')=='answer' if turn else original.status=='awaiting_skill_clarification'
                     prompt=spec.source_prompt if retry or is_answer else spec.source_prompt+'\n\nAdditional user direction: '+instruction
@@ -545,6 +560,8 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     for field in ('current_version_id','current_video_asset','version_reviews','generation_jobs','evaluation_history','iterations_used'):
                         setattr(self.state,field,getattr(original,field))
                     self.state.history=[*original.history,*self.state.history]
+                    if self.state.status=='planning_ready' and requirements.get('generation_requested'):
+                        self.state.status='awaiting_first_video';self.chat_action='generate'
                     record_exchange(self.state,instruction,original)
                     if path=='/api/retry-planning':self.state.conversation.pop(-2)
                     return self._json(200,present(self.state))
@@ -921,6 +938,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
         self.state.execution_mode='autopilot';self.state.autopilot_paused=False
 
     def _json(self, status: HTTPStatus, data: dict):
+        if 'creative_spec' in data:data['agent_runtime']={'controller_model':configured_model(),'planner_model':CONTROL_PLANNER.model}
         if 'creative_spec' in data and hasattr(self,'chat_decision') and not getattr(self,'chat_decision_recorded',False):
             self.state.history.append({'phase':'conversation','event':'conversation_turn_understood','payload':self.chat_decision})
             data['history']=self.state.history;self.chat_decision_recorded=True

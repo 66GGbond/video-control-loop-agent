@@ -3,11 +3,38 @@ import os
 import unittest
 from unittest.mock import patch
 from backend.app.demo import create_demo_state
-from backend.app.chat_turns import respond,recover_editing_question,decide,pending_question
+from backend.app.chat_turns import respond,recover_editing_question,decide,pending_question,recover_last_command,failure_reply
 from tests import test_local_server as local
 
 
 class ChatTurnTests(unittest.TestCase):
+    def test_rejected_combined_command_is_recovered_without_media_execution(self):
+        state=create_demo_state('原始剧本');state.status='skill_preparation_failed'
+        text='跳过人物三视图，直接生成视频'
+        state.conversation=[{'role':'user','text':text},{'role':'assistant','kind':'dialogue_reply','text':'这条消息暂时未能完成理解，请重发。'}]
+        result={'intent':'confirm_generation','summary':'跳过三视图，准备生成视频','character_reference_policy':'skip','dialogue_edit_policy':None}
+        with patch('backend.app.chat_turns.decide',return_value=result):
+            self.assertTrue(recover_last_command(state));self.assertFalse(recover_last_command(state))
+        self.assertEqual(state.status,'skill_preparation_failed')
+        self.assertEqual(state.creative_spec.character_reference_plan['status'],'skipped')
+        self.assertTrue(state.creative_spec.enriched_context['resolved_requirements']['generation_requested'])
+        self.assertEqual(state.generation_jobs,[])
+
+    def test_validation_errors_are_not_described_as_failure_to_understand_language(self):
+        reply=failure_reply(ValueError('Dialogue change requires a creative decision'))
+        self.assertIn('系统校验',reply);self.assertNotIn('未能理解',reply)
+    def test_real_combined_confirmation_and_existing_policy_are_accepted(self):
+        state=create_demo_state('英语剧本');state.creative_spec.enriched_context['resolved_requirements']={'dialogue_edit_policy':'condense_preserve_meaning'}
+        text='可以，跳过生成人物三视图的操作，直接文生视频'
+        result={'intent':'confirm_generation','question_id':'','summary':'跳过人物三视图并生成视频','evidence':text,'dialogue_edit_policy':'condense_preserve_meaning','character_reference_policy':'skip','reply':''}
+        with patch.dict(os.environ,{'ARK_API_KEY':'offline'}),patch('backend.app.chat_turns.request_json',return_value=result):
+            self.assertEqual(decide(state,text)['character_reference_policy'],'skip')
+
+    def test_user_skip_prevents_character_model_calls(self):
+        from backend.app.character_references import assess,ensure_ready
+        state=create_demo_state('剧情片');state.creative_spec.enriched_context['resolved_requirements']={'character_reference_policy':'skip'}
+        with patch('backend.app.character_references.request_json') as image_planning:
+            self.assertFalse(assess(state)['required']);ensure_ready(state);image_planning.assert_not_called()
     def test_question_is_answered_without_changing_the_brief_or_pending_choice(self):
         state=create_demo_state('完整剧本，英语对白，30秒。');state.status='awaiting_skill_clarification'
         state.creative_spec.enriched_context['skill_clarification']={'question':'是否允许精简台词？'}
@@ -47,6 +74,20 @@ class ChatTurnHTTPTests(unittest.TestCase):
     cleanup=local.LocalServerTests.cleanup
     request=local.LocalServerTests.request
     session=local.LocalServerTests.session
+
+    def test_combined_confirmation_skips_images_and_waits_for_valid_planning(self):
+        visitor=self.session();state=create_demo_state('英语剧本');state.status='skill_preparation_failed'
+        state.creative_spec.enriched_context['resolved_requirements']={'dialogue_edit_policy':'condense_preserve_meaning'};self.store.save(visitor,state)
+        text='可以，跳过生成人物三视图的操作，直接文生视频'
+        result={'intent':'confirm_generation','question_id':'','summary':'跳过三视图并生成','evidence':text,'dialogue_edit_policy':'condense_preserve_meaning','character_reference_policy':'skip','reply':''}
+        planned=create_demo_state(state.creative_spec.source_prompt)
+        with patch.dict(os.environ,{'ARK_API_KEY':'offline'}),patch('backend.app.chat_turns.request_json',return_value=result),patch.object(local.server,'create_enriched_project_state',return_value=planned) as planning,patch.object(local.server.VIDEO_GENERATOR,'submit') as video:
+            status,data=self.request('/api/chat',{'message':text})
+        self.assertEqual(status,200,data);video.assert_not_called()
+        self.assertEqual(planning.call_args.args[0],state.creative_spec.source_prompt)
+        self.assertEqual(planning.call_args.kwargs['resolved_requirements']['character_reference_policy'],'skip')
+        self.assertEqual(data['chat_action'],'generate');self.assertEqual(data['status'],'awaiting_first_video')
+        self.assertEqual(data['agent_runtime']['controller_model'],'doubao-seed-2-1-pro-260915')
 
     def test_unified_chat_binds_an_answer_without_appending_it_to_the_brief(self):
         visitor=self.session();state=create_demo_state('原始英语剧本，30秒。');state.status='awaiting_skill_clarification'
