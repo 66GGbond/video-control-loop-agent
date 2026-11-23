@@ -145,3 +145,32 @@ body[data-workspace=history] #creative-agent,body[data-workspace=history] #creat
   .project-toolbar-actions {width:100%;}
   .project-toolbar-actions select {flex:1;max-width:none;min-width:0;}
 }
+
+/* A quiet project strip; the switcher shares the application's visual language. */
+.project-toolbar {padding:10px 0 17px;gap:16px;border:0;border-bottom:1px solid #b49bff20;border-radius:0;background:transparent;margin-bottom:24px;}
+.current-project-label {font-size:10px;letter-spacing:.04em;}
+.project-name-form input {font-size:18px;}
+.project-name-form .canvas-icon {opacity:.55;}
+.project-name-form:hover .canvas-icon,.project-name-form:focus-within .canvas-icon {opacity:1;}
+.project-toolbar-actions {gap:8px;}
+.project-switcher {position:relative;}
+#project-picker,.project-toolbar-actions #reset {display:flex;align-items:center;gap:8px;min-height:36px;padding:7px 12px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--muted);font-family:inherit;font-size:12px;font-weight:500;line-height:20px;box-shadow:none;cursor:pointer;}
+#project-picker .ui-icon,.project-toolbar-actions #reset .ui-icon {width:15px;height:15px;}
+#project-picker:hover,#project-picker[aria-expanded=true] {background:#b49bff0d;color:var(--text);}
+.project-toolbar-actions #reset {border-color:#b49bff30;background:#a57aff0b;color:#dfd4f4;}
+.project-toolbar-actions #reset:hover {background:#a57aff1c;border-color:#b49bff60;}
+#project-picker:focus-visible,.project-toolbar-actions #reset:focus-visible {outline:2px solid #a987e4;outline-offset:3px;}
+.switch-chevron {margin-left:6px;color:#80768f;transition:transform .15s;}
+#project-picker[aria-expanded=true] .switch-chevron {transform:rotate(180deg);}
+.project-switch-panel {position:absolute;right:0;top:calc(100% + 10px);width:300px;max-width:calc(100vw - 110px);z-index:35;padding:8px;background:rgba(25,21,34,.97);backdrop-filter:blur(24px);border:1px solid #b49bff30;border-radius:13px;box-shadow:0 18px 54px #0008;}
+#project-search {width:100%;margin:0 0 6px;padding:10px 11px;border:0;border-bottom:1px solid #b49bff1a;border-radius:6px 6px 0 0;background:transparent;color:var(--text);font:inherit;font-size:12px;outline:none;}
+#project-search:focus {background:#b49bff06;box-shadow:none;}
+.project-switch-list {max-height:280px;overflow-y:auto;}
+.project-switch-row {width:100%;display:flex;align-items:center;gap:11px;padding:11px 10px;border:0;border-radius:7px;background:transparent;color:#c9c1d6;text-align:left;font:inherit;font-size:13px;cursor:pointer;}
+.project-switch-row>.ui-icon {width:17px;height:17px;color:#8b7d9f;flex:none;}
+.project-switch-row>span:first-of-type {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.project-switch-row:hover,.project-switch-row:focus-visible {background:#b49bff12;outline:none;}
+.project-switch-row.is-current {background:#a57aff0d;color:#eee5ff;}
+.project-current-check {margin-left:auto;color:#b69bdc;}
+.project-switch-empty {margin:10px;padding:10px;color:var(--muted);font-size:12px;}
+@container vcl (max-width:650px){.project-toolbar{padding:6px 0 15px}.project-toolbar-actions{width:auto;flex-wrap:wrap}.project-switch-panel{left:0;right:auto}}

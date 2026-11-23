@@ -3,18 +3,27 @@
   const name=document.querySelector('#active-project-name'), form=document.querySelector('#project-name-form');
   const edit=document.querySelector('#edit-project-name'), picker=document.querySelector('#project-picker');
   const status=document.querySelector('#project-toolbar-status');
+  const panel=document.querySelector('#project-switch-panel'), search=document.querySelector('#project-search'), list=document.querySelector('#project-switch-list');
+  function closePicker(focus=false){panel.hidden=true;picker.setAttribute('aria-expanded','false');if(focus)picker.focus();}
+  function paintProjects(){
+    list.replaceChildren();
+    const matches=projects.filter(p=>p.kind==='vcl'&&p.title.toLocaleLowerCase().includes(search.value.trim().toLocaleLowerCase()));
+    for(const project of matches){
+      const row=document.createElement('button');row.type='button';row.className='project-switch-row';
+      row.innerHTML='<svg class="ui-icon" aria-hidden="true"><use href="#i-folder"/></svg>';
+      const title=document.createElement('span');title.textContent=project.title;title.translate=false;row.append(title);
+      if(project.id===state?.project_id){row.classList.add('is-current');row.setAttribute('aria-current','true');const check=document.createElement('span');check.className='project-current-check';check.textContent='✓';row.append(check);}
+      row.addEventListener('click',()=>openProject(project.id));list.append(row);
+    }
+    if(!matches.length){const empty=document.createElement('p');empty.className='project-switch-empty';empty.textContent=I18n.text(projects.length?'No matching projects':'No saved projects yet');list.append(empty);}
+  }
   let state=null, projects=[], loading=false, saving=false, editing=false;
   function error(message){status.textContent=I18n.text(message);status.hidden=!message;}
   function paint(){
     if(!state)return;
     name.setAttribute('aria-label',I18n.text('Project name'));
     if(!editing)name.value=state.project_name||I18n.text('Untitled project');
-    picker.replaceChildren();
-    const placeholder=new Option(I18n.text('Choose project'),'');picker.add(placeholder);
-    for(const project of projects.filter(p=>p.kind==='vcl')){
-      const option=new Option(project.title,project.id);option.translate=false;picker.add(option);
-    }
-    picker.value='';
+    paintProjects();
   }
   async function load(){
     if(loading)return;loading=true;
@@ -52,15 +61,28 @@
     }catch(e){error(e.message);}finally{saving=false;edit.disabled=false;}
   });
   name.addEventListener('keydown',event=>{if(event.key==='Escape'){event.preventDefault();finishEdit();}});
-  picker.addEventListener('focus',load);
-  picker.addEventListener('change',async()=>{
-    const id=picker.value;if(!id||id===state?.project_id){paint();return;}
+  async function openProject(id){
+    if(id===state?.project_id){closePicker(true);return;}
     picker.disabled=true;error('');
     try{
       await window.CanvasImages.flush();
       const result=await endpoint('/api/projects/open',{method:'POST',body:JSON.stringify({project_id:id})});
       location.assign('/?project='+encodeURIComponent(result.project_id)+'&opened='+Date.now()+'#vcl');
-    }catch(e){error(e.message);paint();picker.disabled=false;}
+    }catch(e){error(e.message);picker.disabled=false;}
+  }
+  picker.addEventListener('click',()=>{
+    if(!panel.hidden){closePicker();return;}
+    panel.hidden=false;picker.setAttribute('aria-expanded','true');search.value='';paintProjects();search.focus();load();
+  });
+  search.addEventListener('input',paintProjects);
+  document.addEventListener('pointerdown',event=>{if(!event.target.closest('.project-switcher'))closePicker();});
+  panel.addEventListener('keydown',event=>{
+    if(event.key==='Escape'){event.preventDefault();closePicker(true);}
+    if(['ArrowDown','ArrowUp'].includes(event.key)){
+      event.preventDefault();const rows=[...list.querySelectorAll('button')];if(!rows.length)return;
+      const index=rows.indexOf(document.activeElement),step=event.key==='ArrowDown'?1:-1;
+      rows[(index+step+rows.length)%rows.length].focus();
+    }
   });
   window.addEventListener('vclstatechange',event=>{
     const changed=state?.project_id!==event.detail.project_id;state=event.detail;paint();if(changed)load();
