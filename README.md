@@ -126,4 +126,4 @@ Uploaded Skills, the full brief, reference context and accepted decisions enter 
 
 ## 历史项目
 
-左侧历史项目支持图片或视频帧预览、Agent 自动生成 10 字以内标题、手动改名和恢复继续编辑。VCLA Agent 支持新建时自主命名；VCL 项目、对话与生成版本均保存在本地。详见 [历史项目](docs/project-history.md)。
+左侧历史项目支持图片或视频帧预览、Agent 自动生成 10 字以内标题、手动改名、继续编辑和确认后删除。VCLA Agent 支持新建时自主命名；VCL 项目、对话与生成版本均保存在本地。详见 [历史项目](docs/project-history.md)。

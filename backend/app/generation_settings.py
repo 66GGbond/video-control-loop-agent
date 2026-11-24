@@ -6,7 +6,7 @@ from .agent.sampling import bind_sampling_to_timeline
 from .agent.model_router import recommend, confirm
 
 
-def configure(state, payload):
+def configure(state, payload, *, select_model=True):
     if state.status not in {'planning_ready', 'awaiting_first_video', 'awaiting_repair_upload'}:
         raise ValueError('当前阶段不能更改生成参数。')
     original = state.creative_spec
@@ -25,6 +25,8 @@ def configure(state, payload):
             spec.shots = timing['timeline']
             spec.evidence_sampling = bind_sampling_to_timeline(spec.evidence_sampling, spec.shots)
             spec.generation_contract = {}; spec.evaluation_contract = {}
+        if not select_model:
+            return None
         # Only reevaluate when inputs changed. The stored recommendation remains the default.
         choice = recommend(state)
         manual = payload.get('model_changed') is True

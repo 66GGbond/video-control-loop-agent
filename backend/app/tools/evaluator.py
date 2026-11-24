@@ -477,13 +477,13 @@ Every one of the five score values is required and must be a JSON number from 1 
         unknown labels remain invalid so the agent never invents a repair target.
         """
         candidate = str(value or "").strip().upper()
-        direct = re.search(r"(?:^|\b)(?:SHOT\s*)?S?\s*([1-5])(?:\b|$)", candidate)
+        direct = re.search(r"(?:^|\b)(?:SHOT\s*)?S?\s*([1-6])(?:\b|$)", candidate)
         if direct:
             proposed = f"S{direct.group(1)}"
             if not frame_shot_map or any((item.get("shot_id") if isinstance(item, dict) else item) == proposed for item in frame_shot_map.values()):
                 return proposed
         evidence_text = str(evidence or "").upper()
-        frame = re.search(r"\bF([1-6])\b", evidence_text)
+        frame = re.search(r"\bF([1-9][0-9]*)\b", evidence_text)
         if frame and frame_shot_map:
             mapped = frame_shot_map.get(f"F{frame.group(1)}")
             if isinstance(mapped, dict):

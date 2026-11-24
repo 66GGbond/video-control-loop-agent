@@ -59,6 +59,16 @@ class AgentLoopTests(unittest.TestCase):
         self.assertEqual(len(self.state.evaluation_history), 1)
         self.assertIs(self.state.latest_report, original_report)
 
+    def test_explicit_recheck_reobserves_and_updates_the_same_version(self):
+        self.agent.run_once(self.state)
+        original = self.state.latest_report
+        self.state.creative_spec.max_iterations = self.state.iterations_used
+        with patch.object(self.agent.evaluator, "analyze", wraps=self.agent.evaluator.analyze) as analyze:
+            self.agent.run_once(self.state, reobserve=True)
+        analyze.assert_called_once()
+        self.assertIsNot(self.state.latest_report, original)
+        self.assertEqual([report.version_id for report in self.state.evaluation_history], ["v1"])
+
     def test_human_budget_approval_resumes_reason_act_without_rescoring(self):
         self.state.creative_spec.max_iterations = 1
         self.agent.run_once(self.state)

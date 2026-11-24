@@ -79,6 +79,20 @@ class LocalServerTests(unittest.TestCase):
             self.assertTrue(all(Path(f['path']).exists() for f in stored.evaluation_frame_records))
             self.assertEqual(data['current_video_asset']['local_video_url'],'/api/generated-video/v1')
 
+    def test_review_retry_targets_the_current_video_without_creative_revision(self):
+        visitor = self.session()
+        state = create_demo_state()
+        server.create_orchestrator().run_once(state)
+        state.status = "ready_for_evaluation"
+        state.current_video_asset = {"local_video_url": "/api/generated-video/v1"}
+        self.store.save(visitor, state)
+        with patch.object(server, "decide_chat_turn", return_value={"intent": "retry"}):
+            status, data = self.request("/api/chat", {"message": "按刚才要求重新质检"})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(data["chat_action"], "recheck_quality")
+        self.assertEqual(data["pending_user_direction"], "")
+        self.assertEqual(data["current_version_id"], "v1")
+
     def test_character_stage_gates_video_and_reset_during_image_work(self):
         from backend.app.image_tasks import ImageTasks
         visitor = self.session(); self.plan(visitor)
@@ -186,6 +200,48 @@ class LocalServerTests(unittest.TestCase):
             self.assertEqual(data["status"], "generated_video_ready")
             self.assertNotIn("local_video_path", data["current_video_asset"])
             self.request("/api/reset", {})
+
+    def test_chat_applies_duration_and_skips_quality_after_current_render(self):
+        visitor = self.session()
+        self.plan(visitor)
+        state = self.store.load(visitor)
+        state.creative_spec.enriched_context['video_prompt'] = 'Base production prompt.'
+        self.store.save(visitor, state)
+        generate = {'intent': 'confirm_generation', 'character_reference_policy': 'skip'}
+        stop = {'intent': 'workflow', 'stop_after_generation': True}
+        with patch.dict('os.environ', {'VIDEO_PROVIDER': 'auto', 'SEEDANCE_25_API_KEY': 'test'}), \
+             patch.object(server, 'decide_chat_turn', side_effect=[generate, stop]), \
+             patch.object(server.VIDEO_GENERATOR, 'available', return_value=True), \
+             patch.object(server.VIDEO_GENERATOR, 'select_tool', return_value={}), \
+             patch.object(server.VIDEO_GENERATOR, 'submit') as submit:
+            status, data = self.request('/api/chat', {'message': '25s时长，跳过人物三视图生成步骤，直接文生视频'})
+            self.assertEqual(status, 200, data)
+            self.assertEqual(data['chat_action'], 'generate')
+            self.assertIn('25 秒', data['conversation'][-1]['text'])
+            self.assertIn('跳过人物三视图', data['conversation'][-1]['text'])
+            submit.assert_not_called()
+            job = GenerationJob('in-flight', 'v1', 'test', 'test', 'test')
+            submit.return_value = job
+            status, submitted = self.request('/api/generate-video', {})
+            self.assertEqual(status, 202, submitted)
+            self.assertEqual(submitted['history'][-1]['payload']['generation_spec']['duration_seconds'], 25)
+
+            status, running = self.request('/api/chat', {'message': '视频生成完以后就中断agent流程，不需要进行后续的质检与修复'})
+            self.assertEqual(status, 200, running)
+            self.assertEqual(running['status'], 'generating_video')
+            self.assertEqual(running['pending_user_direction'], '')
+            self.assertTrue(running['creative_spec']['enriched_context']['resolved_requirements']['stop_after_generation'])
+        job.status, job.output_video_url = 'succeeded', 'https://example.invalid/video.mp4'
+        with patch.object(server.VIDEO_GENERATOR, 'refresh', return_value=job), \
+             patch.object(server.DemoHandler, '_download_generated_video', return_value=(Path(self.tmp.name) / 'test.mp4', 1)), \
+             patch.object(server.ORCHESTRATOR, 'run_once') as quality:
+            status, completed = self.request('/api/refresh-generation', {})
+            self.assertEqual(status, 200, completed)
+            self.assertEqual(completed['status'], 'video_complete')
+            self.assertEqual(completed['version_reviews'][0]['status'], 'generation_complete')
+            self.assertEqual(completed['current_video_asset']['local_video_url'], '/api/generated-video/v1')
+            self.assertEqual(self.request('/api/run-loop', {})[0], 400)
+            quality.assert_not_called()
 
     def test_duplicate_generation_and_reset_are_blocked_while_pending(self):
         visitor = self.session()

@@ -20,14 +20,17 @@ class AgentOrchestrator:
         self.fallback_planner = fallback_planner
         self.prompt_compiler = prompt_compiler
 
-    def run_once(self, state: ProjectState) -> ProjectState:
+    def run_once(self, state: ProjectState, *, reobserve: bool = False) -> ProjectState:
         # Observe
         review = self._current_review(state)
         report = review.report
-        if report is None:
+        if report is None or reobserve:
             try:
                 report = self.evaluator.analyze(state)
             except VisionObservationUnavailable as exc:
+                if reobserve and review.report is not None:
+                    self._record(state, "observe", "re_evaluation_unavailable", {"message": str(exc)})
+                    raise ValueError(f"复检未完成，原评估已保留。{exc}") from exc
                 state.latest_report = None
                 state.latest_decision = None
                 state.latest_repair_task = None
@@ -50,12 +53,14 @@ class AgentOrchestrator:
                 # Keeps the zero-dependency sample fixture aligned with the same V1 → Vn chain as uploads.
                 state.current_version_id = report.version_id
                 review.version_id = report.version_id
-            # A quality trajectory is built only from immutable, version-level observations.
+            if reobserve:
+                state.evaluation_history = [item for item in state.evaluation_history if item.version_id != report.version_id]
+            # The quality trajectory has one observation per video version.
             state.evaluation_history.append(report)
             review.report = report
             review.observation_error = ""
             review.status = "evaluated"
-            self._record(state, "observe", "evaluation_completed", {
+            self._record(state, "observe", "re_evaluation_completed" if reobserve else "evaluation_completed", {
                 "version": report.version_id,
                 # This is the same scoped, evidence-calibrated diagnostic
                 # shown in Version Review — never the legacy arithmetic mean

@@ -21,7 +21,7 @@ from ..domain.models import ProjectState, RepairTask
 from ..domain.rubric import audio_evaluation_plan, dimension_for_criterion, select_rubric_profile
 from .generation_spec import fallback_generation_spec, validate_generation_spec
 from .duration_planning import duration_plan_from_timeline
-from .sampling import bind_sampling_to_timeline, fallback_evidence_sampling_policy, validate_evidence_sampling_policy
+from .sampling import bind_sampling_to_timeline, fallback_evidence_sampling_policy, plan_evidence_density, validate_evidence_sampling_policy
 from .timing import normalise_shot_timeline
 from .video_capabilities import VideoCapabilityRegistry
 from .asset_manifest import bind_criteria_to_assets, build_asset_manifest
@@ -61,6 +61,7 @@ class PromptCompiler:
         spec.duration_plan = duration_plan
         rubric_profile = select_rubric_profile(spec)
         policy = bind_sampling_to_timeline(self._sampling_policy(spec, rubric_profile), timeline)
+        policy = plan_evidence_density(policy, timeline, spec.acceptance_criteria, risk_policy=spec.evidence_sampling)
         audio_plan = audio_evaluation_plan(spec)
         provider_binding = self._provider_binding(spec, output)
         asset_manifest = build_asset_manifest(spec.multimodal_assets or ([spec.reference_asset] if spec.reference_asset else []))
@@ -79,6 +80,7 @@ class PromptCompiler:
         compile_run_id = self._stable_id("compile", {
             "control_plan_id": control_plan_id,
             "target_version": target_version,
+            "sampling_policy": policy,
             "repair_delta": repair_delta,
             "output": output,
             "duration_plan": duration_plan,

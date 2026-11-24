@@ -7,7 +7,7 @@ from .agent.orchestrator import AgentOrchestrator
 from .agent.context import ContextEnrichmentAgent
 from .agent.asset_manifest import build_asset_manifest
 from .agent.planner import ArkControlPlanner, ArkRepairPlanner, FixturePlanner
-from .agent.sampling import fallback_evidence_sampling_policy
+from .agent.sampling import fallback_evidence_sampling_policy, plan_evidence_density
 from .agent.generation_spec import fallback_generation_spec, requested_duration_seconds
 from .agent.duration_planning import build_duration_plan, fallback_beat_pacing
 from .agent.prompt_compiler import PromptCompiler
@@ -321,6 +321,10 @@ def present(state: ProjectState) -> dict:
     # or duplicate full-resolution media from the state endpoint.
     spec = state_json.get("creative_spec")
     if isinstance(spec, dict):
+        # Older projects can use adaptive sampling without recompiling their recorded contracts.
+        policy = spec.get("evidence_sampling") or {}
+        if policy and spec.get("shots") and not policy.get("shot_density"):
+            spec["evidence_sampling"] = plan_evidence_density(policy, spec["shots"], spec.get("acceptance_criteria", []))
         for asset in spec.get("multimodal_assets", []) or []:
             if isinstance(asset, dict) and asset.get("media_type") in {"audio","video"}:
                 asset.pop("data_url", None)

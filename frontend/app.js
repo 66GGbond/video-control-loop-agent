@@ -20,6 +20,7 @@ let lastCurrentVersionId = null;
 let renderedState = null;
 let generationPollTimer = null;
 let generatedEvidencePending = false;
+let generatedEvidenceError = null;
 let autopilotAdvancePending = false;
 let activeAudioReferencePreview = null;
 let activeImageReferencePreview = null;
@@ -548,123 +549,187 @@ function readAudioDuration(file) {
   });
 }
 
-function waitForVideoEvent(video, event) {
+function waitForVideoEvent(video, event, start) {
   return new Promise((resolve, reject) => {
     const onSuccess = () => { cleanup(); resolve(); };
     const onError = () => { cleanup(); reject(new Error("This browser could not read the selected video.")); };
+    const timer = window.setTimeout(() => {
+      cleanup();
+      reject(new Error("The browser timed out reading a video frame."));
+    }, 10000);
     const cleanup = () => {
+      window.clearTimeout(timer);
       video.removeEventListener(event, onSuccess);
       video.removeEventListener("error", onError);
     };
     video.addEventListener(event, onSuccess, { once: true });
     video.addEventListener("error", onError, { once: true });
+    try {
+      start?.();
+    } catch (error) {
+      cleanup();
+      reject(error);
+    }
   });
 }
 
-function adaptiveEvidencePlan(duration, policy = {}) {
-  const windows = Array.isArray(policy.shot_windows) ? policy.shot_windows : [];
-  const storyboardIds = windows
-    .filter(item => item && /^S[1-6]$/.test(String(item.shot_id))
-      && Number.isFinite(Number(item.start_seconds)) && Number.isFinite(Number(item.end_seconds))
-      && Number(item.end_seconds) > Number(item.start_seconds))
-    .map(item => String(item.shot_id));
-  const validShotIds = new Set(storyboardIds.length ? storyboardIds : ["S1"]);
-  const requestedFocus = Array.isArray(policy.focus_shot_ids)
-    ? policy.focus_shot_ids.filter(shotId => validShotIds.has(shotId))
-    : [];
-  const focusShots = requestedFocus.length ? requestedFocus : [storyboardIds.at(-1) || "S1"];
-  const criticalMoments = Array.isArray(policy.critical_moments) ? policy.critical_moments : [];
-  const reasons = new Map(criticalMoments.map(item => [item.shot_id, item.reason]).filter(([shotId, reason]) => validShotIds.has(shotId) && typeof reason === "string"));
-  const windowByShot = new Map(windows
-    .filter(item => item && validShotIds.has(item.shot_id)
-      && Number.isFinite(Number(item.start_seconds)) && Number.isFinite(Number(item.end_seconds))
-      && Number(item.end_seconds) > Number(item.start_seconds))
-    .map(item => [item.shot_id, { start: Number(item.start_seconds), end: Number(item.end_seconds) }]));
-  const plannedDuration = Number(policy.planned_duration_seconds);
-  const durationBudget = duration <= 4 ? 4 : duration <= 12 ? 5 : 6;
-  const frameBudget = Math.min(6, Math.max(durationBudget, storyboardIds.length || 1, 3 + Math.min(3, criticalMoments.length)));
-  // A missing policy is a degraded single-beat fallback, never a hidden
-  // three-beat assumption. Normally every ID comes from the approved plan.
-  const baselineShotIds = storyboardIds.length ? storyboardIds : ["S1"];
-  const counts = Object.fromEntries(baselineShotIds.map(shotId => [shotId, 1]));
-  for (let index = 0; index < frameBudget - baselineShotIds.length; index += 1) {
-    const shotId = focusShots[index % focusShots.length] || baselineShotIds.at(-1);
-    counts[shotId] += 1;
-  }
-  const anchors = {
-    1: [0.5],
-    2: [0.28, 0.72],
-    3: [0.2, 0.5, 0.8],
-  };
-  // A planned window is in the Agent's intended timeline. Scale it to the
-  // actual generated duration so a provider's small duration drift does not
-  // make evidence extraction fail or silently revert to global percentages.
-  if (windowByShot.size === baselineShotIds.length && Number.isFinite(plannedDuration) && plannedDuration > 0) {
-    return baselineShotIds.flatMap(shotId => {
-      const window = windowByShot.get(shotId);
-      const positions = anchors[counts[shotId]] || anchors[3];
-      return positions.map(position => {
-        const plannedTime = window.start + (window.end - window.start) * position;
-        return {
-          ratio: Math.min(0.99, Math.max(0.01, plannedTime / plannedDuration)),
-          expected_shot_id: shotId,
-          sampling_reason: reasons.has(shotId)
-            ? `Timeline evidence for ${shotId} (${window.start}–${window.end}s): ${reasons.get(shotId)}`
-            : `Timeline baseline for ${shotId} (${window.start}–${window.end}s).`,
-        };
-      });
-    }).sort((left, right) => left.ratio - right.ratio);
-  }
-  return baselineShotIds.flatMap((shotId, index) => {
-    const count = counts[shotId];
-    // Evenly distribute evidence within each planned beat when timing windows
-    // are unavailable. This handles any 1–6 beat plan, including S4–S6.
-    const perBeat = Array.from({ length: count }, (_, sampleIndex) =>
-      Math.min(.94, Math.max(.06, (index + (sampleIndex + 1) / (count + 1)) / baselineShotIds.length))
-    );
-    return perBeat.map(ratio => ({
-    ratio,
-    expected_shot_id: shotId,
-    sampling_reason: reasons.has(shotId)
-      ? `Risk-focused evidence: ${reasons.get(shotId)}`
-      : `Baseline evidence for ${shotId}.`,
-  })); }).sort((left, right) => left.ratio - right.ratio);
+function evidenceWindows(duration, policy = {}) {
+  const scale = duration / (Number(policy.planned_duration_seconds) || duration);
+  const hints = new Map((policy.shot_density || []).map(hint => [hint.shot_id, hint]));
+  const focus = new Set(policy.focus_shot_ids || []);
+  const windows = (policy.shot_windows || []).flatMap(window => {
+    if (!/^S[1-6]$/.test(window.shot_id) || !(window.end_seconds > window.start_seconds)) return [];
+    const hint = hints.get(window.shot_id);
+    return [{
+      shotId: window.shot_id,
+      start: window.start_seconds * scale,
+      end: Math.min(duration, window.end_seconds * scale),
+      interval: Number(hint?.target_interval_seconds) || (focus.has(window.shot_id) ? 2 : 4),
+      reason: hint?.reason || (focus.has(window.shot_id) ? "Planned visual risk" : "Baseline coverage"),
+    }];
+  });
+  return windows.length ? windows : [{shotId: "S1", start: 0, end: duration, interval: 4, reason: "Baseline coverage"}];
 }
 
-async function extractEvaluationFrames(file, evidenceSampling) {
-  const url = URL.createObjectURL(file);
-  const video = document.createElement("video");
-  video.preload = "metadata";
-  video.muted = true;
-  video.playsInline = true;
-  video.src = url;
-  try {
-    await waitForVideoEvent(video, "loadedmetadata");
-    if (!Number.isFinite(video.duration) || video.duration <= 0) throw new Error("The video duration could not be read.");
-    const evidencePlan = adaptiveEvidencePlan(video.duration, evidenceSampling);
-    const canvas = document.createElement("canvas");
-    const context = canvas.getContext("2d", { alpha: false });
-    const frames = [];
-    for (let index = 0; index < evidencePlan.length; index += 1) {
-      const sample = evidencePlan[index];
-      const timestamp = Math.min(video.duration - 0.02, Math.max(0, video.duration * sample.ratio));
-      video.currentTime = timestamp;
-      await waitForVideoEvent(video, "seeked");
-      // 512px preserves product/identity evidence far better than the old 320px
-      // while remaining small enough for a short interview-demo evaluation call.
-      const scale = Math.min(1, 512 / Math.max(video.videoWidth || 512, video.videoHeight || 512));
-      canvas.width = Math.max(1, Math.round((video.videoWidth || 320) * scale));
-      canvas.height = Math.max(1, Math.round((video.videoHeight || 180) * scale));
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      frames.push({
-        frame_id: `F${index + 1}`,
-        timestamp: Number(timestamp.toFixed(2)),
-        expected_shot_id: sample.expected_shot_id,
-        sampling_reason: sample.sampling_reason,
-        data_url: canvas.toDataURL("image/jpeg", 0.68),
+function baselineEvidencePlan(windows, limit) {
+  const counts = windows.map(() => 1);
+  const baselineLimit = Math.max(windows.length, limit - 5);
+  while (counts.reduce((total, count) => total + count, 0) < baselineLimit) {
+    const demand = windows.map((window, index) => (window.end - window.start) / (window.interval * counts[index]));
+    const choice = demand.indexOf(Math.max(...demand));
+    if (Math.max(...demand) <= 1.05 && counts.reduce((total, count) => total + count, 0) >= 3) break;
+    counts[choice] += 1;
+  }
+  return windows.flatMap((window, index) => Array.from({length: counts[index]}, (_, frame) => ({
+    timestamp: window.start + (window.end - window.start) * (frame + 0.5) / counts[index],
+    expected_shot_id: window.shotId,
+    sampling_reason: `Baseline · ${window.reason}`,
+  })));
+}
+
+function imageDifference(a, b) {
+  let total = 0;
+  for (let index = 0; index < a.length; index += 4) {
+    total += Math.abs(a[index] - b[index]) + Math.abs(a[index + 1] - b[index + 1]) + Math.abs(a[index + 2] - b[index + 2]);
+  }
+  return total / (a.length * 0.75 * 255);
+}
+
+function refinementProbes(windows, baseline, missingShots, extraSlots) {
+  const probes = [];
+  for (const [windowIndex, window] of windows.entries()) {
+    const frames = baseline.filter(frame => frame.expected_shot_id === window.shotId);
+    const before = baseline.findLast(frame => frame.expected_shot_id === windows[windowIndex - 1]?.shotId);
+    const after = baseline.find(frame => frame.expected_shot_id === windows[windowIndex + 1]?.shotId);
+    const edges = [{timestamp: window.start}, ...frames, {timestamp: window.end}];
+    for (let index = 0; index < edges.length - 1; index++) {
+      const left = edges[index], right = edges[index + 1];
+      const gap = right.timestamp - left.timestamp;
+      if (gap < Math.max(0.16, Math.min(0.4, window.interval / 3))) continue;
+      const nearby = [left, right].filter(frame => frame.preview);
+      if (!nearby.length) continue;
+      const neighbor = index === 0 ? before : index === edges.length - 2 ? after : null;
+      const change = nearby.length === 2 ? imageDifference(left.preview, right.preview)
+        : neighbor ? imageDifference(nearby[0].preview, neighbor.preview) : 0;
+      const missing = missingShots.has(window.shotId);
+      const risk = gap / window.interval;
+      probes.push({
+        timestamp: (left.timestamp + right.timestamp) / 2,
+        expected_shot_id: window.shotId,
+        nearby, missing,
+        priority: (missing ? 2 : 0) + 4 * change + Math.min(2, risk),
       });
     }
-    return frames;
+  }
+  return probes.sort((a, b) => b.priority - a.priority).slice(0, Math.min(12, extraSlots * 2));
+}
+
+function additionalEvidence(probe, frame) {
+  const novelty = Math.min(...probe.nearby.map(other => imageDifference(frame.preview, other.preview)));
+  // Drop probes that merely repeat their neighbors. Prior visual gaps can
+  // warrant a smaller change, such as a brief gesture or a prop moving.
+  const threshold = probe.missing ? 0.014 : 0.035;
+  if (novelty < threshold) return null;
+  return {
+    ...frame,
+    sampling_reason: probe.missing ? "Refined · prior visual evidence gap" : "Refined · visible change between samples",
+    rank: probe.priority + novelty * 4,
+  };
+}
+
+function missingVisualShots(state) {
+  const criteria = new Map((state.creative_spec.acceptance_criteria || []).map(item => [item.requirement_id, item]));
+  return new Set((state.latest_report?.atomic_checks || []).flatMap(check => {
+    const criterion = criteria.get(check.requirement_id);
+    if (check.status !== "insufficient_evidence" || !criterion) return [];
+    const observed = String(check.observed || "");
+    const audioLimit = /(?:cannot|could not|unable to|can't)\s+(?:verify|confirm|hear|assess)[^.;]*(?:audio|spoken|dialogue|lip[ -]?sync|English line)|(?:无法|不能)[^。；]*(?:听清|音频|音轨|台词|对白|口型)/i;
+    return audioLimit.test(observed) ? [] : [criterion.shot_id];
+  }));
+}
+
+function evidencePolicy(spec) {
+  const contract = spec.evaluation_contract?.evidence_plan?.sampling_policy;
+  return contract?.shot_density ? contract : spec.evidence_sampling || contract || {};
+}
+
+async function extractEvaluationFrames(file, evidenceSampling, missingShots = new Set()) {
+  const url = URL.createObjectURL(file);
+  const video = document.createElement("video");
+  video.preload = "auto";
+  video.muted = true;
+  video.playsInline = true;
+  try {
+    await waitForVideoEvent(video, "loadedmetadata", () => { video.src = url; });
+    if (!Number.isFinite(video.duration) || video.duration <= 0) throw new Error("The video duration could not be read.");
+    const windows = evidenceWindows(video.duration, evidenceSampling);
+    const limit = Math.max(windows.length + 1, Math.min(18, Number(evidenceSampling?.max_frames) || 18));
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d", { alpha: false });
+    const probeCanvas = document.createElement("canvas");
+    probeCanvas.width = 24;
+    probeCanvas.height = 16;
+    const probeContext = probeCanvas.getContext("2d", { alpha: false, willReadFrequently: true });
+    const scale = Math.min(1, 512 / Math.max(video.videoWidth || 512, video.videoHeight || 512));
+    canvas.width = Math.max(1, Math.round((video.videoWidth || 320) * scale));
+    canvas.height = Math.max(1, Math.round((video.videoHeight || 180) * scale));
+
+    async function readFrame(sample) {
+      const timestamp = Math.max(0, Math.min(video.duration - 0.02, sample.timestamp));
+      if (Math.abs(video.currentTime - timestamp) > 0.001) {
+        await waitForVideoEvent(video, "seeked", () => { video.currentTime = timestamp; });
+      }
+      if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+        await waitForVideoEvent(video, "loadeddata");
+      }
+      probeContext.drawImage(video, 0, 0, probeCanvas.width, probeCanvas.height);
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      return {
+        timestamp: Number(video.currentTime.toFixed(2)),
+        expected_shot_id: sample.expected_shot_id,
+        sampling_reason: sample.sampling_reason,
+        preview: probeContext.getImageData(0, 0, probeCanvas.width, probeCanvas.height).data,
+        data_url: canvas.toDataURL("image/jpeg", 0.68),
+      };
+    }
+
+    const baseline = [];
+    for (const sample of baselineEvidencePlan(windows, limit)) baseline.push(await readFrame(sample));
+    const candidates = [];
+    const extraSlots = limit - baseline.length;
+    for (const probe of refinementProbes(windows, baseline, missingShots, extraSlots)) {
+      try {
+        const addition = additionalEvidence(probe, await readFrame(probe));
+        if (addition) candidates.push(addition);
+      } catch (_) {
+        // A supplemental seek must not discard the usable baseline.
+        break;
+      }
+    }
+    candidates.sort((a, b) => b.rank - a.rank);
+    return [...baseline, ...candidates.slice(0, extraSlots)]
+      .sort((a, b) => a.timestamp - b.timestamp)
+      .map(({preview, rank, ...frame}, index) => ({...frame, frame_id: `F${index + 1}`}));
   } finally {
     video.removeAttribute("src");
     video.load();
@@ -677,7 +742,7 @@ function projectStage(status) {
   if (status === "ready_for_brief") return "brief";
   if (status === "awaiting_context_confirmation") return "context";
   if (["planning_ready", "needs_segmentation"].includes(status)) return "plan";
-  if (["awaiting_first_video", "generating_video", "generated_video_ready"].includes(status)) return "version";
+  if (["awaiting_first_video", "generating_video", "generated_video_ready", "video_complete"].includes(status)) return "version";
   return "quality";
 }
 
@@ -692,7 +757,9 @@ function renderProjectStatus(state) {
       ? ["Multi-segment plan required", "The Agent determined this brief should not be compressed into one 30-second clip. Revise the brief or plan separate segments.", "Segment plan", "Revise brief"]
       : ["Creative plan ready", "The creative plan and complete video prompt are ready. Continue in the Agent.", "Plan ready", "Generate video"],
     characters: ["Character reference stage", "Prepare three views of the important characters before video generation.", "Character references", "Generate three views"],
-    version: ["Video version in production", "The approved plan is being rendered or prepared as evidence for evaluation.", "Version", "Wait for video evidence"],
+    version: state.status === "video_complete"
+      ? [I18n.language === "zh" ? "视频已保存" : "Video saved", I18n.language === "zh" ? "已按要求结束流程，跳过质检和修复。" : "The workflow ended after generation.", "Version", "Watch video"]
+      : ["Video version in production", "The approved plan is being rendered or prepared as evidence for evaluation.", "Version", "Wait for video evidence"],
     quality: ["Quality control loop active", "Review the selected version, its evidence-backed quality result, and the Agent's next decision.", "Quality", "Review version result"],
   };
   if(characterPlan?.status==='ready')labels.characters=["Creative plan ready","Character references attached to video","Plan ready","Generate V1"];
@@ -767,7 +834,7 @@ function executionTraceEntries(state) {
     entries.push({
       kind: "evaluate",
       title: "Quality result validated",
-      detail: `${human(report.release_decision || "insufficient_evidence")} · ${report.rubric_profile?.label || "selected rubric"}. ${report.summary || ""}`,
+      detail: I18n.text(releaseLabel(report.release_decision)),
     });
   }
   const decision = state.latest_decision;
@@ -829,7 +896,7 @@ function renderConversation(state) {
     text.setAttribute("translate","no");text.textContent=message.role==="assistant"&&message.kind?I18n.text(message.text):message.text;
     article.append(text);log.append(article);
   }
-  const progress={generating_video:'视频正在生成，完成后会在主界面展示。',ready_for_evaluation:'视频已生成，是否开始质检？',repair_uploaded:'修复版本已就绪，是否开始质检？',awaiting_repair_upload:'修复方案已整理好，是否生成修复版本？'}[state.status];
+  const progress=state.status === 'generating_video' ? '视频正在生成，完成后会在主界面展示。' : '';
   if(progress&&!autopilotIsRunning(state)){const item=document.createElement('article');item.className='agent-message agent-message-system';const text=document.createElement('p');text.textContent=I18n.text(progress);item.append(text);log.append(item);}
   paintOutbox(state,log);
   log.hidden=!messages.length&&!progress&&!chatOutbox.length;
@@ -837,9 +904,12 @@ function renderConversation(state) {
 }
 
 function renderPlanLanguage(spec) {
+  const cadence = new Map((evidencePolicy(spec).shot_density || []).map(shot => [shot.shot_id, shot.target_interval_seconds]));
   document.querySelector("#shots").innerHTML=spec.shots.map(shot=>{
+    const interval = cadence.get(shot.shot_id);
+    const sampling = interval ? (I18n.language === "zh" ? ` · 预设抽帧间隔 ${interval} 秒` : ` · Target sampling interval ${interval}s`) : "";
     const timing=Number.isFinite(Number(shot.start_seconds))&&Number.isFinite(Number(shot.end_seconds))
-      ? `<small class="shot-timing">${escapeHTML(shot.start_seconds)}–${escapeHTML(shot.end_seconds)}s · ${escapeHTML(I18n.text(shot.critical_moment || "planned visual beat"))}</small>`:"";
+      ? `<small class="shot-timing">${escapeHTML(shot.start_seconds)}–${escapeHTML(shot.end_seconds)}s · ${escapeHTML(I18n.text(shot.critical_moment || "planned visual beat"))}${escapeHTML(sampling)}</small>`:"";
     return `<li><strong>${escapeHTML(shot.shot_id)}</strong> — ${escapeHTML(I18n.text(shot.intent))}${timing}</li>`;
   }).join("");
   document.querySelector("#constraint-list").innerHTML=(spec.immutable_character_attributes||[]).map(item=>`<span class="tag">${escapeHTML(I18n.text(item))}</span>`).join("");
@@ -961,6 +1031,12 @@ function drawTrend(canvas, reports, releaseFloor = 3) {
   });
 }
 
+function releaseLabel(decision) {
+  if (decision === "pass") return "Quality gate passed";
+  if (decision === "fail") return "Repair required";
+  return "More evidence required";
+}
+
 function renderQuality(scores, reports, report) {
   const overall = diagnosticScore(report);
   const audioCheck = (report.atomic_checks || []).find(item => item.evidence_mode === "audio_probe");
@@ -968,25 +1044,26 @@ function renderQuality(scores, reports, report) {
     ? `<span><i class="${audioCheck.status === "pass" ? "good" : ""}"></i>Audio presence ${human(audioCheck.status)}</span>`
     : `<span><i></i>Audio gate not required</span>`;
   const decision = report.release_decision || "insufficient_evidence";
-  const releaseText = decision === "pass" ? "Quality gate passed" : decision === "insufficient_evidence" ? "More evidence required" : "Repair required";
+  const releaseText = releaseLabel(decision);
   const coverage = report.evidence_coverage || {};
   const criticalCoverage = `${coverage.critical_requirements_evidenced || 0} / ${coverage.critical_requirements_total || 0}`;
   const profile = report.rubric_profile || {};
-  const profileLabel = profile.label || "Controlled video";
+  const profileLabel = I18n.text(profile.label || "Controlled video");
   const profileReason = profile.selection_reason || "The Agent selected this rubric from the approved brief and control plan.";
   const labels = profile.dimension_labels || {};
+  const dimensionLabel = name => I18n.text(labels[name] || human(name));
   const configuredDimensions = (profile.release_dimensions || []).filter(name => name in scores);
   const dimensions = (configuredDimensions.length ? configuredDimensions : Object.keys(scores))
     .filter(name => name !== "overall" && name !== "audio_visual_alignment")
     .map(name => [name, Number(scores[name])])
     .filter(([, value]) => Number.isFinite(value));
   const inactive = (profile.inactive_dimensions || [])
-    .map(name => labels[name] || human(name));
+    .map(dimensionLabel);
   const evidenceByDimension = report.dimension_evidence || {};
   const dimensionEvidenceText = dimensions.map(([name]) => {
     const item = evidenceByDimension[name];
-    if (!item || !item.requirements_total) return `${labels[name] || human(name)}: policy axis`;
-    return `${labels[name] || human(name)}: ${item.requirements_evidenced || 0}/${item.requirements_total} evidenced`;
+    if (!item || !item.requirements_total) return I18n.text(`${dimensionLabel(name)}: policy axis`);
+    return I18n.text(`${dimensionLabel(name)}: ${item.requirements_evidenced || 0}/${item.requirements_total} evidenced`);
   });
   const displayedDimensionCount = dimensions.length || 5;
   const overallFloor = Number(profile.overall_floor || 3);
@@ -994,9 +1071,9 @@ function renderQuality(scores, reports, report) {
       <div class="overall-card"><span>Diagnostic quality</span><strong>${overall.toFixed(1)}<em>/5</em></strong></div>
       <div class="threshold-card"><span class="label">Release policy</span><strong>${releaseText}</strong><div class="threshold-list"><span><i class="${overall >= overallFloor ? "good" : ""}"></i>Diagnostic quality ≥ ${overallFloor.toFixed(1)}</span><span><i class="${decision === "pass" ? "good" : ""}"></i>Critical evidence ${criticalCoverage}</span><span><i class="${decision === "pass" ? "good" : ""}"></i>Active dimensions (${displayedDimensionCount}) ≥ ${Number(profile.dimension_floor || 3).toFixed(1)}</span>${audioGate}</div></div>
     </div>
-    <div class="rubric-profile"><span>Selected rubric · ${profileLabel}</span><small>${profileReason}</small></div>
+    <div class="rubric-profile"><span>Selected rubric · ${escapeHTML(profileLabel)}</span><small>${escapeHTML(profileReason)}</small></div>
     <div class="trend-frame"><div class="trend-head"><strong>${reports.length > 1 ? "Quality trajectory" : "Initial quality baseline"}</strong><span>Publish ≥ ${overallFloor.toFixed(1)} · evidence-gated</span></div><canvas id="trend-canvas" class="trend-canvas" role="img" aria-label="Quality score trend"></canvas></div>
-    <div class="bar-chart">${dimensions.map(([name, value]) => `<div class="bar-row ${scoreClass(value)}"><span class="bar-label">${labels[name] || human(name)}</span><span class="bar-track"><i class="bar-fill" style="width:${value / 5 * 100}%"></i></span><span class="bar-value">${value.toFixed(1)}</span></div>`).join("")}</div><div class="rubric-profile"><small>Score evidence — ${dimensionEvidenceText.join(" · ")}</small></div>${inactive.length ? `<div class="rubric-profile"><small>Excluded for this plan — not part of the diagnostic score: ${inactive.join(" · ")}</small></div>` : ""}`;
+    <div class="bar-chart">${dimensions.map(([name, value]) => `<div class="bar-row ${scoreClass(value)}"><span class="bar-label">${escapeHTML(dimensionLabel(name))}</span><span class="bar-track"><i class="bar-fill" style="width:${value / 5 * 100}%"></i></span><span class="bar-value">${value.toFixed(1)}</span></div>`).join("")}</div><div class="rubric-profile"><small>Score evidence — ${escapeHTML(dimensionEvidenceText.join(" · "))}</small></div>${inactive.length ? `<div class="rubric-profile"><small>Excluded for this plan — not part of the diagnostic score: ${escapeHTML(inactive.join(" · "))}</small></div>` : ""}`;
 }
 
 function reviewForVersion(state, versionId) {
@@ -1017,6 +1094,7 @@ function versionStateLabel(review) {
   if (review.status === "generating") return "Generating";
   if (review.status === "sampling_evidence") return "Preparing evidence";
   if (review.status === "generation_failed") return "Generation failed";
+  if (review.status === "generation_complete") return I18n.language === "zh" ? "已生成" : "Generated";
   if (review.status === "published") return "Passed";
   if (review.status === "repair_required") return "Repair required";
   if (review.status === "stopped_budget_exhausted") return "Approval required";
@@ -1056,10 +1134,15 @@ function renderVersionNavigator(state) {
   if (qualityProgressVisible) return;
   const active = selectedReview(state);
   const failedGeneration = active?.status === "generation_failed";
+  const failureDetail = active?.observation_error || "";
+  const copyrightRejected = failedGeneration
+    && failureDetail.includes("OutputVideoSensitiveContentDetected.PolicyViolation")
+    && /copyright/i.test(failureDetail);
   generationFailure.hidden = !failedGeneration;
-  generationFailureDetail.textContent = failedGeneration
-    ? (active.observation_error || "The video provider did not return a completed video.")
-    : "";
+  generationFailureDetail.textContent = copyrightRejected
+    ? (I18n.language === "zh" ? "Seedance 拒绝了这次输出，原因是可能涉及版权限制。没有返回成片。" : "Seedance rejected the output because it may be subject to copyright restrictions. No video was returned.")
+    : failedGeneration ? (failureDetail || "The video provider did not return a completed video.") : "";
+  document.querySelector("#generation-failure-hint").hidden = copyrightRejected;
   tabs.innerHTML = reviews.map(review => {
     const selected = review.version_id === active?.version_id;
     const score = review.report ? `${diagnosticScore(review.report).toFixed(1)} / 5` : "Not evaluated";
@@ -1117,6 +1200,86 @@ function renderVersionNavigator(state) {
   }
 }
 
+const reviewTranslations = new Map();
+let displayedReviewKey = "";
+let displayedOriginalReviewKey = "";
+
+function renderEvidenceChecks(report, translateText) {
+  const checks = report.atomic_checks || [];
+  if (!checks.length) return '<div class="empty">No planned acceptance checks were returned.</div>';
+  const statusLabels = {pass: "Pass", fail: "Fail", insufficient_evidence: "Insufficient evidence"};
+  const field = (label, value) => value ? `<p><strong>${label}</strong> <span translate="no">${escapeHTML(translateText(value))}</span></p>` : "";
+  return checks.map(item => {
+    const status = Object.hasOwn(statusLabels, item.status) ? item.status : "insufficient_evidence";
+    const evidence = (item.evidence || []).map(frame => {
+      const timestamp = frame.source === "audio_probe"
+        ? I18n.text(`Audio interval · ${Number(frame.start_seconds || 0).toFixed(2)}–${Number(frame.end_seconds || 0).toFixed(2)}s`)
+        : `${frame.frame_id} · ${Number(frame.timestamp).toFixed(2)}${I18n.language === "zh" ? " 秒" : "s"}`;
+      return `${escapeHTML(timestamp)} <span translate="no">${escapeHTML(translateText(frame.description))}</span>`;
+    }).join("<br>");
+    return `<div class="case ${status}"><div class="case-top"><h3>${escapeHTML(item.shot_id)} · <span translate="no">${escapeHTML(translateText(item.requirement))}</span></h3><span class="severity ${status}">${statusLabels[status]}</span></div>
+      ${field("Expected:", item.expected)}${field("Observed:", item.observed)}
+      <p><strong>Evidence:</strong> ${evidence || `<span>${item.evidence_mode === "audio_probe" ? "No valid audio evidence returned." : "No valid frame evidence returned."}</span>`}</p>
+      ${field("Repair hint:", item.repair_hint)}</div>`;
+  }).join("");
+}
+
+function renderReviewText(state, review, retry = false) {
+  const report = review?.report;
+  const language = I18n.language;
+  const summary = document.querySelector("#summary");
+  const evidence = document.querySelector("#bad-cases");
+  const status = document.querySelector("#review-translation-status");
+  const retryButton = document.querySelector("#retry-review-translation");
+  const original = document.querySelector("#original-review");
+  const originalContent = document.querySelector("#original-review-content");
+  const originalKey = JSON.stringify([state.project_id, review?.version_id, report, review?.observation_error]);
+  const key = report ? language + originalKey : "";
+  if (displayedReviewKey !== key || displayedOriginalReviewKey !== originalKey) {
+    if (displayedOriginalReviewKey !== originalKey) original.open = false;
+    displayedOriginalReviewKey = originalKey;
+    original.hidden = !report && !review?.observation_error;
+    originalContent.innerHTML = report
+      ? `<p class="summary" translate="no">${escapeHTML(report.summary)}</p>${renderEvidenceChecks(report, value => value)}`
+      : `<p translate="no">${escapeHTML(review?.observation_error)}</p>`;
+  }
+  displayedReviewKey = key;
+  if (!report) {
+    summary.hidden = status.hidden = retryButton.hidden = true;
+    evidence.innerHTML = `<div class="empty">${review?.observation_error ? "Observation unavailable" : "No observation yet."}</div>`;
+    return;
+  }
+
+  if (retry) reviewTranslations.delete(key);
+  if (!reviewTranslations.has(key)) {
+    reviewTranslations.set(key, {pending: true});
+    endpoint("/api/review-translation", {
+      method: "POST", body: JSON.stringify({version_id: review.version_id, language}),
+    }).then(({translations}) => {
+      reviewTranslations.set(key, {translations});
+    }).catch(() => {
+      reviewTranslations.set(key, {failed: true});
+    }).finally(() => {
+      if (displayedReviewKey === key && !document.querySelector("#evaluation-section").hidden) {
+        renderReviewText(renderedState, selectedReview(renderedState));
+      }
+    });
+  }
+  const result = reviewTranslations.get(key);
+  status.hidden = !result.pending && !result.failed;
+  status.textContent = result.failed ? "Report translation is unavailable. You can still view the original." : "Translating this review…";
+  retryButton.hidden = !result.failed;
+  summary.hidden = !result.translations || !report.summary;
+  summary.textContent = result.translations?.[report.summary] || "";
+  evidence.innerHTML = result.translations
+    ? renderEvidenceChecks(report, value => result.translations[value] || "")
+    : "";
+}
+
+document.querySelector("#retry-review-translation").addEventListener("click", () => {
+  if (renderedState) renderReviewText(renderedState, selectedReview(renderedState), true);
+});
+
 function renderEvaluation(state) {
   const review = selectedReview(state);
   const report = review?.report || null;
@@ -1125,32 +1288,18 @@ function renderEvaluation(state) {
   source.textContent = observationError ? "Observation unavailable" : !report ? "Awaiting observation" : report.observation_source === "doubao_seed_2_1_pro" ? "Doubao Seed 2.1 Pro" : report.observation_source === "fixture" ? "Demo fixture" : "Archived model result";
   const scores = document.querySelector("#scores");
   const emptyGate = document.querySelector("#gate-empty");
-  const summary = document.querySelector("#summary");
   if (report) {
     const reports = (state.version_reviews || []).map(item => item.report).filter(Boolean);
     emptyGate.hidden = true;
     scores.innerHTML = renderQuality(report.scores, reports, report);
-    requestAnimationFrame(() => drawTrend(document.querySelector("#trend-canvas"), reports, Number(report.rubric_profile?.overall_floor || 3)));
-    summary.textContent = report.summary;
+    const canvas = scores.querySelector("#trend-canvas");
+    requestAnimationFrame(() => { if (canvas.isConnected) drawTrend(canvas, reports, Number(report.rubric_profile?.overall_floor || 3)); });
   } else {
     emptyGate.hidden = false;
-    emptyGate.textContent = observationError || "Run the quality loop to evaluate this version.";
+    emptyGate.textContent = observationError ? "Observation unavailable" : "Run the quality loop to evaluate this version.";
     scores.innerHTML = "";
-    summary.textContent = "";
   }
-
-  const badCases = document.querySelector("#bad-cases");
-  const checks = report?.atomic_checks || [];
-  badCases.innerHTML = report
-    ? (checks.length ? checks.map(item => {
-      const evidence = item.evidence?.length
-        ? item.evidence.map(frame => frame.source === "audio_probe"
-          ? `Audio probe · ${Number(frame.start_seconds || 0).toFixed(2)}–${Number(frame.end_seconds || 0).toFixed(2)}s — ${frame.description}`
-          : `${frame.frame_id} · ${Number(frame.timestamp).toFixed(2)}s — ${frame.description}`).join("<br>")
-        : (item.evidence_mode === "audio_probe" ? "No valid audio evidence returned." : "No valid frame evidence returned.");
-      return `<div class="case ${item.status}"><div class="case-top"><h3>${item.shot_id} · ${item.requirement}</h3><span class="severity ${item.status}">${human(item.status)}</span></div><p><strong>Expected:</strong> ${item.expected}</p><p><strong>Observed:</strong> ${item.observed}</p><p><strong>Evidence:</strong> ${evidence}</p>${item.repair_hint ? `<p><strong>Repair hint:</strong> ${item.repair_hint}</p>` : ""}</div>`;
-    }).join("") : `<div class="empty">No planned acceptance checks were returned.</div>`)
-    : `<div class="empty">${observationError || "No observation yet."}</div>`;
+  renderReviewText(state, review);
 
   const decision = document.querySelector("#decision");
   if (review?.decision) {
@@ -1171,11 +1320,7 @@ function renderEvaluation(state) {
   } else {
     decision.innerHTML = `<div class="empty">Run the quality loop to see the Agent decision.</div>`;
   }
-  const log = document.querySelector("#log");
-  log.innerHTML = state.history.length ? [...state.history].reverse().map(item => {
-    const text = item.payload.reason || item.payload.message || item.payload.human_handoff || JSON.stringify(item.payload);
-    return `<div class="log-row"><span class="phase">${human(item.phase)}</span><span class="event">${human(item.event)}</span><span class="log-detail">${text}</span></div>`;
-  }).join("") : `<div class="empty">The log records Observe, Reason and Act as the agent works.</div>`;
+
 }
 
 function startQualityProgress() {
@@ -1322,7 +1467,7 @@ function render(state) {
   budgetDecrease.disabled = !canAdjustBudget || budget <= state.iterations_used;
   budgetIncrease.disabled = !canAdjustBudget || budget >= 5;
   const videoStage = document.querySelector("#agent-video-action");
-  const firstVideoStates = new Set(["planning_ready", "awaiting_first_video", "generating_video", "generated_video_ready", "ready_for_evaluation", "awaiting_repair_upload", "repair_uploaded", "published", "stopped_budget_exhausted"]);
+  const firstVideoStates = new Set(["planning_ready", "awaiting_first_video", "generating_video", "generated_video_ready", "video_complete", "ready_for_evaluation", "awaiting_repair_upload", "repair_uploaded", "published", "stopped_budget_exhausted"]);
   videoStage.hidden = !firstVideoStates.has(state.status);
   const generationControls = document.querySelector("#video-generation-controls");
   const readyCard = document.querySelector("#video-ready-card");
@@ -1331,6 +1476,13 @@ function render(state) {
   const videoAsset = state.current_video_asset;
   const canRunQuality = state.status === "ready_for_evaluation" || state.status === "repair_uploaded";
   const videoStatus = document.querySelector("#agent-video-status");
+  const evidenceFailed = state.status === "generated_video_ready"
+    && generatedEvidenceError?.projectId === state.project_id
+    && generatedEvidenceError?.versionId === state.current_version_id;
+  const retryEvidence = document.querySelector("#retry-generated-evidence");
+  retryEvidence.hidden = !evidenceFailed;
+  retryEvidence.textContent = I18n.language === "zh" ? "重试取样" : "Retry frame sampling";
+  runLoop.hidden = evidenceFailed;
   if (state.status === "planning_ready" || state.status === "awaiting_first_video") {
     const upcomingVersion = nextVersionLabel(state.current_version_id);
     document.querySelector("#video-stage-copy").textContent = state.status === "planning_ready"
@@ -1355,12 +1507,22 @@ function render(state) {
     runLoop.disabled = true;
     runLoop.textContent = "Generating video…";
   } else if (state.status === "generated_video_ready") {
-    document.querySelector("#video-stage-copy").textContent = "Generation completed. The Agent is sampling risk-aware visual evidence before quality evaluation.";
+    document.querySelector("#video-stage-copy").textContent = evidenceFailed
+      ? (I18n.language === "zh" ? "成片已保存。取样未完成，可用现有视频重试。" : "The video is saved. Retry sampling frames from this version.")
+      : "Generation completed. The Agent is sampling risk-aware visual evidence before quality evaluation.";
     generationControls.hidden = true;
     readyCard.hidden = true;
-    videoStatus.textContent = "Preparing evidence";
+    videoStatus.textContent = evidenceFailed
+      ? (I18n.language === "zh" ? "取样失败" : "Frame sampling failed")
+      : "Preparing evidence";
     runLoop.disabled = true;
     runLoop.textContent = "Preparing evidence…";
+  } else if (state.status === "video_complete") {
+    generationControls.hidden = true;
+    readyCard.hidden = true;
+    document.querySelector("#video-stage-copy").textContent = I18n.language === "zh" ? "视频已保存，可在版本区播放。" : "The saved video is available in the version panel.";
+    videoStatus.textContent = I18n.language === "zh" ? "已生成" : "Generated";
+    runLoop.disabled = true;
   } else if (videoAsset) {
     generationControls.hidden = true;
     readyCard.hidden = false;
@@ -1553,6 +1715,7 @@ async function submitChat(event) {
     accepted=true;chatOutbox=chatOutbox.filter(item=>item!==outgoing);renderConversation(renderedState);
     if(renderedState.chat_action==='generate')await generateVideo(null,true);
     else if(renderedState.chat_action==='quality')await runQualityLoop();
+    else if(renderedState.chat_action==='recheck_quality')await runQualityLoop(true);
     else if(renderedState.chat_action==='retry_evidence')await prepareGeneratedEvidence(renderedState);
     accepted=true;
     if(!renderedState.conversation_only&&autopilotIsRunning(renderedState))await advanceAutopilot(renderedState);
@@ -1633,10 +1796,23 @@ async function approveCurrentPlan() {
   render(state);
   return state;
 }
-async function runQualityLoop() {
+async function runQualityLoop(recheck = false) {
+  if (qualityLoopPending) return;
+  const current = renderedState;
   startQualityProgress();
   try {
-    const state = await endpoint("/api/run-loop", { method: "POST" });
+    const options = { method: "POST" };
+    if (recheck) {
+      const url = current.current_video_asset?.local_video_url;
+      if (!url) throw new Error("The saved video is unavailable for rechecking.");
+      const video = await fetch(url, {cache: "no-store", signal: AbortSignal.timeout(20000)});
+      if (!video.ok) throw new Error("The saved video could not be read.");
+      const spec = current.creative_spec;
+      const frames = await extractEvaluationFrames(await video.blob(), evidencePolicy(spec), missingVisualShots(current));
+      if (renderedState?.project_id !== current.project_id) throw new Error("The project changed before the recheck.");
+      options.body = JSON.stringify({reobserve: true, version_id: current.current_version_id, frames});
+    }
+    const state = await endpoint("/api/run-loop", options);
     finishQualityProgress(true);
     selectedReviewVersionId = state.current_version_id;
     render(state);
@@ -1651,28 +1827,43 @@ async function prepareGeneratedEvidence(state) {
   const videoUrl = state.current_video_asset?.local_video_url;
   if (!videoUrl) return;
   generatedEvidencePending = true;
+  generatedEvidenceError = null;
+  render(state);
+  const sameVersion = () => renderedState?.project_id === state.project_id
+    && renderedState?.current_version_id === state.current_version_id;
   try {
-    const response = await fetch(videoUrl, { cache: "no-store" });
+    const response = await fetch(videoUrl, { cache: "no-store", signal: AbortSignal.timeout(20000) });
     if (!response.ok) throw new Error("The generated video could not be retrieved for evaluation.");
-    const contractSampling = state.creative_spec?.evaluation_contract?.evidence_plan?.sampling_policy;
-    const frames = await extractEvaluationFrames(await response.blob(), contractSampling || state.creative_spec?.evidence_sampling);
-    const prepared = await endpoint("/api/register-generated-video", { method: "POST", body: JSON.stringify({ frames }) });
+    const frames = await extractEvaluationFrames(await response.blob(), evidencePolicy(state.creative_spec));
+    if (!sameVersion() || renderedState.status !== "generated_video_ready") return;
+    const prepared = await endpoint("/api/register-generated-video", {
+      method: "POST",
+      body: JSON.stringify({ frames }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!sameVersion()) return;
     render(prepared);
     if (autopilotIsRunning(prepared)) {
       await runQualityLoop();
       await advanceAutopilot(renderedState);
     }
   } catch (error) {
-    const log=document.querySelector('#agent-conversation');
-    let notice=log.querySelector('[data-evidence-error]');
-    if(!notice){notice=document.createElement('article');notice.className='agent-message agent-message-system';notice.dataset.evidenceError='true';log.append(notice);}
-    notice.textContent=I18n.text('Your video is saved. Evidence preparation failed. Send “retry” to continue without generating another video.');
-    log.hidden=false;document.querySelector('#creative-agent-feed').scrollTop=document.querySelector('#creative-agent-feed').scrollHeight;
+    if (!sameVersion() || renderedState?.status !== "generated_video_ready") return;
+    // Another tab may have registered the same version while we were sampling.
+    try {
+      const latest = await endpoint("/api/state", { signal: AbortSignal.timeout(5000) });
+      if (!sameVersion() || latest.project_id !== state.project_id) return;
+      if (latest.status !== "generated_video_ready") { render(latest); return; }
+    } catch (_) { /* The retained video can be sampled again. */ }
+    if (!sameVersion() || renderedState?.status !== "generated_video_ready") return;
+    generatedEvidenceError = {projectId: state.project_id, versionId: state.current_version_id};
+    render(renderedState);
     setCreativeAgentOpen(true);
   } finally {
     generatedEvidencePending = false;
   }
 }
+document.querySelector("#retry-generated-evidence").addEventListener("click", () => prepareGeneratedEvidence(renderedState));
 async function pollGeneration() {
   if (generationPollTimer) window.clearTimeout(generationPollTimer);
   try {
@@ -1758,7 +1949,9 @@ document.querySelector("#autopilot-toggle").addEventListener("click", async even
     button.disabled = false;
   }
 });
-document.querySelector("#run-loop").addEventListener("click", runQualityLoop);
+document.querySelector("#run-loop").addEventListener("click", () => runQualityLoop(
+  Boolean(renderedState?.latest_report && renderedState?.current_video_asset?.local_video_url)
+));
 document.querySelector("#generate-video").addEventListener("click", generateVideo);
 document.querySelector("#generate-repair").addEventListener("click", event => {
   if (event.currentTarget.dataset.mode === "request_budget") {
@@ -1801,11 +1994,14 @@ document.querySelector('#new-project-form').addEventListener('submit',async even
 refresh();
 
 window.addEventListener("languagechange", () => {
-  if(renderedState){renderConversation(renderedState);if(renderedState.creative_spec.shots?.length){renderPlanLanguage(renderedState.creative_spec);renderReferenceMedia(renderedState.creative_spec);}}
-  const report = renderedState && selectedReview(renderedState)?.report;
-  if (!report) return;
-  const reports = renderedState.version_reviews.map(item => item.report).filter(Boolean);
-  drawTrend(document.querySelector("#trend-canvas"), reports, Number(report.rubric_profile?.overall_floor || 3));
+  if (!renderedState) return;
+  renderConversation(renderedState);
+  renderExecutionTrace(renderedState);
+  if (renderedState.creative_spec.shots?.length) {
+    renderPlanLanguage(renderedState.creative_spec);
+    renderReferenceMedia(renderedState.creative_spec);
+  }
+  if (!document.querySelector("#evaluation-section").hidden) renderEvaluation(renderedState);
 });
 
 // Shared project state for navigation and history.

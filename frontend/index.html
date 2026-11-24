@@ -4,11 +4,11 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Video Control Loop Agent</title>
-    <link rel="stylesheet" href="styles.css?v=direct-agent-v2" />
-  <link rel="stylesheet" href="workspace.css?v=direct-agent-v2" />
+    <link rel="stylesheet" href="styles.css?v=localized-review-v2" />
+  <link rel="stylesheet" href="workspace.css?v=history-management-v1" />
   </head>
   <body data-workspace="vcl">
-<svg class="workspace-symbols" aria-hidden="true"><defs><symbol id="i-agent" viewBox="0 0 24 24"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z"/></symbol><symbol id="i-history" viewBox="0 0 24 24"><path d="M3 11a9 9 0 1 1 2.5 7M3 5v6h6m3-5v7l4 2"/></symbol><symbol id="i-pencil" viewBox="0 0 24 24"><path d="m15 4 5 5M4 20l1-6L16 3a2 2 0 0 1 3 0l2 2a2 2 0 0 1 0 3L10 19Z"/></symbol><symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></symbol><symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol><symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol><symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V5h6l2 2h10v13H3Z"/></symbol><symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5M4 16v5h16v-5"/></symbol><symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v13m-5-5 5 5 5-5M4 16v5h16v-5"/></symbol><symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol><symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol><symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h16m-6-6 6 6-6 6"/></symbol><symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol><symbol id="i-text" viewBox="0 0 24 24"><path d="M4 5h16M12 5v15M8 20h8"/></symbol><symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 4-6 5 7"/></symbol><symbol id="i-video" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="m10 8 6 4-6 4Z"/></symbol><symbol id="i-audio" viewBox="0 0 24 24"><path d="M4 10v4m4-8v12m4-15v18m4-15v12m4-8v4"/></symbol></defs></svg><nav class="app-nav" aria-label="Workspace"><a class="app-mark" href="#vcl" aria-label="VCL Agent"><svg class="ui-icon" aria-hidden="true"><use href="#i-agent"/></svg></a><div class="nav-pages"><button class="nav-page active" type="button" data-workspace="vcl" aria-current="page"><svg class="ui-icon" aria-hidden="true"><use href="#i-grid"/></svg><span>VCL Agent</span></button><button class="nav-page" type="button" data-workspace="history"><svg class="ui-icon" aria-hidden="true"><use href="#i-history"/></svg><span>Project history</span></button></div><div class="nav-bottom"><button id="workspace-language" type="button" title="Language" aria-label="Language">EN</button><span class="local-signal" title="Local workspace"><i></i><span>Local</span></span></div></nav>
+<svg class="workspace-symbols" aria-hidden="true"><defs><symbol id="i-agent" viewBox="0 0 24 24"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5Z"/></symbol><symbol id="i-history" viewBox="0 0 24 24"><path d="M3 11a9 9 0 1 1 2.5 7M3 5v6h6m3-5v7l4 2"/></symbol><symbol id="i-pencil" viewBox="0 0 24 24"><path d="m15 4 5 5M4 20l1-6L16 3a2 2 0 0 1 3 0l2 2a2 2 0 0 1 0 3L10 19Z"/></symbol><symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></symbol><symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol><symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol><symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V5h6l2 2h10v13H3Z"/></symbol><symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5M4 16v5h16v-5"/></symbol><symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v13m-5-5 5 5 5-5M4 16v5h16v-5"/></symbol><symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol><symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3m3 0-1 13H7L6 7m4 4v5m4-5v5"/></symbol><symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol><symbol id="i-arrow" viewBox="0 0 24 24"><path d="M4 12h16m-6-6 6 6-6 6"/></symbol><symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol><symbol id="i-text" viewBox="0 0 24 24"><path d="M4 5h16M12 5v15M8 20h8"/></symbol><symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 4-6 5 7"/></symbol><symbol id="i-video" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="m10 8 6 4-6 4Z"/></symbol><symbol id="i-audio" viewBox="0 0 24 24"><path d="M4 10v4m4-8v12m4-15v18m4-15v12m4-8v4"/></symbol></defs></svg><nav class="app-nav" aria-label="Workspace"><a class="app-mark" href="#vcl" aria-label="VCL Agent"><svg class="ui-icon" aria-hidden="true"><use href="#i-agent"/></svg></a><div class="nav-pages"><button class="nav-page active" type="button" data-workspace="vcl" aria-current="page"><svg class="ui-icon" aria-hidden="true"><use href="#i-grid"/></svg><span>VCL Agent</span></button><button class="nav-page" type="button" data-workspace="history"><svg class="ui-icon" aria-hidden="true"><use href="#i-history"/></svg><span>Project history</span></button></div><div class="nav-bottom"><button id="workspace-language" type="button" title="Language" aria-label="Language">EN</button><span class="local-signal" title="Local workspace"><i></i><span>Local</span></span></div></nav>
     <main id="vcl-workspace" aria-label="VCL Agent">
       <header class="hero"><h1>Video Control Loop Agent</h1></header>
       <section class="project-toolbar" aria-label="Project toolbar">
@@ -95,7 +95,7 @@
           <div id="generation-failure" class="generation-failure" role="status" hidden>
             <strong>Generation failed</strong>
             <span id="generation-failure-detail"></span>
-            <small>Update the brief or settings if needed, then retry from the Creative Agent.</small>
+            <small id="generation-failure-hint">Update the brief or settings if needed, then retry from the Creative Agent.</small>
           </div>
         </section>
       </section>
@@ -106,7 +106,7 @@
             <div class="panel-heading"><div><p class="section-kicker">04 · QUALITY CONTROL</p><h2>Release gate</h2></div><span class="pill">Policy controlled</span></div>
             <div id="gate-empty" class="empty">Run the quality loop to evaluate this version.</div>
             <div id="scores" class="scores"></div>
-            <p id="summary" translate="no" class="summary"></p>
+            <p id="summary" translate="no" class="summary" hidden></p>
           </article>
           <article class="panel agent-panel">
             <div class="panel-heading"><div><p class="section-kicker">05 · REPAIR PLANNING</p><h2>Agent decision</h2></div><span class="pill purple">Reason → Act</span></div>
@@ -114,16 +114,16 @@
           </article>
         </section>
 
-        <section class="grid bottom-grid">
-          <article class="panel">
-            <div class="panel-heading"><div><p class="section-kicker">OBSERVATION LAYER</p><h2>Bad Case evidence</h2></div><span id="observation-source" class="pill">Observe</span></div>
-            <div id="bad-cases" class="empty">No observation yet.</div>
-          </article>
-          <article class="panel log-panel">
-            <div class="panel-heading"><div><p class="section-kicker">PROJECT MEMORY</p><h2>Auditable decision log</h2></div><span class="pill">Memory</span></div>
-            <div id="log" class="timeline"><div class="empty">The log records Observe, Reason and Act as the agent works.</div></div>
-          </article>
-        </section>
+        <article class="panel evidence-panel">
+          <div class="panel-heading"><div><h2>Evidence observation</h2></div><span id="observation-source" class="pill">Awaiting observation</span></div>
+          <p id="review-translation-status" class="empty" role="status" hidden></p>
+          <button id="retry-review-translation" class="secondary" type="button" hidden>Retry report translation</button>
+          <div id="bad-cases"></div>
+          <details id="original-review" class="original-review" hidden>
+            <summary>View original report</summary>
+            <div id="original-review-content"></div>
+          </details>
+        </article>
       </section>
     </main>
 
@@ -142,6 +142,7 @@
         <section id="agent-video-action" class="agent-action-card" hidden>
           <div class="agent-action-heading"><span id="agent-video-status" class="pill">Awaiting video</span></div>
           <p id="video-stage-copy" class="agent-action-copy">Start the Agent to generate V1 from the approved control plan.</p>
+          <button id="retry-generated-evidence" class="secondary" type="button" hidden>Retry frame sampling</button>
           <div id="video-generation-controls" class="agent-video-actions">
             <button id="generate-video" class="primary" type="button">Generate V1</button>
           </div>
@@ -174,6 +175,18 @@
     </aside>
     <button id="creative-agent-toggle" class="creative-agent-toggle" type="button" aria-label="Open Creative Agent" aria-controls="creative-agent" aria-expanded="false"><svg class="ui-icon" aria-hidden="true"><use href="#i-agent"/></svg> <span>Creative Agent</span><i class="capsule-dot"></i></button>
     <dialog id="new-project-dialog" class="project-dialog" aria-labelledby="new-project-title"><form id="new-project-form"><div class="project-dialog-heading"><h2 id="new-project-title">New project</h2><button id="new-project-cancel" class="icon-button" type="button" aria-label="Close"><svg class="ui-icon" aria-hidden="true"><use href="#i-close"/></svg></button></div><label for="new-project-name">Project name</label><input id="new-project-name" type="text" maxlength="80" placeholder="Optional — Agent names it from your brief" autocomplete="off"/><button type="submit" class="primary">Create project</button></form></dialog>
+    <dialog id="delete-project-dialog" class="project-dialog" aria-labelledby="delete-project-title" aria-describedby="delete-project-description">
+      <form id="delete-project-form">
+        <h2 id="delete-project-title">Delete project</h2>
+        <p id="delete-project-name" class="delete-project-name" translate="no"></p>
+        <p id="delete-project-description">This permanently removes the project from your workspace, including access to its conversation and versions.</p>
+        <p id="delete-project-error" class="delete-project-error" role="alert" hidden></p>
+        <div class="delete-project-actions">
+          <button id="cancel-delete-project" class="secondary" type="button" autofocus>Cancel</button>
+          <button id="confirm-delete-project" class="secondary danger" type="submit">Delete project</button>
+        </div>
+      </form>
+    </dialog>
     <dialog id="video-player-dialog" class="video-player-dialog" aria-labelledby="video-player-title">
       <div class="video-player-header">
         <div><p class="section-kicker">VERSION PLAYBACK</p><h2 id="video-player-title">Selected video</h2></div>
@@ -181,15 +194,15 @@
       </div>
       <video id="review-video-player" controls playsinline preload="metadata"></video>
     </dialog>
-    <script src="i18n-catalog.js?v=direct-agent-v2"></script>
+    <script src="i18n-catalog.js?v=history-management-v1"></script>
     <script src="i18n.js?v=direct-agent-v2"></script>
     <script src="character-references.js?v=direct-agent-v2"></script>
     <script src="model-selection.js?v=direct-agent-v2"></script>
 
-    <script src="app.js?v=direct-agent-v2"></script>
+    <script src="app.js?v=localized-review-v2"></script>
 
     <script src="project-toolbar.js?v=direct-agent-v2"></script>
-    <script src="project-history.js?v=direct-agent-v2"></script>
+    <script src="project-history.js?v=history-management-v1"></script>
     <script src="workspace.js?v=direct-agent-v2"></script>
   </body>
 </html>

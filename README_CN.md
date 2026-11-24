@@ -115,16 +115,12 @@ H3 V2 为异步任务；本项目会提交任务、轮询状态、下载生成�
 
 ## 当前模型
 
-Doubao Seed 2.1 Pro（`doubao-seed-2-1-pro-260915`）负责需求理解、规划、视觉质检与修复决策；Seedance 2.5、Seedance 2.0 和 MiniMax H3 负责视频生成。画布生图已接入 Seedream 5.0 Pro 与 Flash，先推荐、再由用户确认生成。 [模型职责、原有策略与后续路由扩展](docs/model-routing.md)。
+Doubao Seed 2.1 Pro（`doubao-seed-2-1-pro-260915`）负责需求理解、规划、视觉质检与修复决策；Seedance 2.5、Seedance 2.0 和 MiniMax H3 负责视频生成。人物参考图接入 Seedream 5.0 Pro 与 Flash，先推荐、再由用户确认生成。 [模型职责、原有策略与后续路由扩展](docs/model-routing.md)。
 
 ## 视频模型推荐
 
 Seedance 2.5、Seedance 2.0 与 MiniMax H3 已接入模型卡片与运行时选型 Skill。`VIDEO_PROVIDER=auto` 时，Doubao 推荐兼容候选并默认选中，用户在紧凑表格中调整生成参数，点击生成时使用当前设置。H3 仅在明确低预算目标下参与推荐。脚本后由 Agent 判断是否需要重要人物三视图，生成后作为视频参考；参考视频链接入口已移除。详见 [模型路由与能力边界](docs/model-routing.md)。
 
-## 画布工作区
-
-[本地画布与全局创作 Agent](docs/canvas.md)：节点编辑、参考连线、自动保存，并复用现有生成和质检流程。
-
 ## 历史项目
 
-左侧历史项目支持图片或视频帧预览、Agent 自动生成 10 字以内标题、手动改名和恢复继续编辑。VCLA Agent 支持新建时自主命名；VCLA Agent 与画布分别存档、分别恢复，互不替换活动内容。详见 [历史项目](docs/project-history.md)。
+左侧历史项目支持图片或视频帧预览、Agent 自动生成 10 字以内标题、手动改名、继续编辑和确认后删除。项目、对话与生成版本保存在本地。详见 [历史项目](docs/project-history.md)。

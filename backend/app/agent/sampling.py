@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Set
 
 from .timing import MAX_BEATS, normalise_shot_timeline
 
+MAX_EVIDENCE_FRAMES = 18
+
 
 def _shot_ids(shots: List[Dict[str, Any]]) -> list[str]:
     return [str(shot.get("shot_id")) for shot in shots if isinstance(shot, dict)]
@@ -103,6 +105,21 @@ def validate_evidence_sampling_policy(
     if not isinstance(rationale, str) or not rationale.strip():
         raise ValueError(f"{field}.rationale must be concise text")
     result: Dict[str, Any] = {"focus_shot_ids": focus, "critical_moments": moments, "rationale": rationale.strip(), "source": "doubao_seed_2_1_pro"}
+    density = value.get("shot_density")
+    if isinstance(density, list):
+        hints = {}
+        for hint in density:
+            if not isinstance(hint, dict) or not isinstance(hint.get("shot_id"), str) or hint["shot_id"] not in allowed:
+                continue
+            interval = hint.get("target_interval_seconds")
+            if isinstance(interval, (int, float)) and not isinstance(interval, bool) and 0.4 <= interval <= 8:
+                hints[hint["shot_id"]] = {
+                    "shot_id": hint["shot_id"],
+                    "target_interval_seconds": round(interval, 2),
+                    "reason": str(hint.get("reason") or "")[:160],
+                }
+        if hints:
+            result["shot_density"] = list(hints.values())
     raw_windows = value.get("shot_windows")
     if raw_windows is not None:
         if not isinstance(raw_windows, list) or len(raw_windows) != len(allowed):
@@ -121,6 +138,27 @@ def validate_evidence_sampling_policy(
         if value.get("planned_duration_seconds") is not None:
             result["planned_duration_seconds"] = _time_value(value["planned_duration_seconds"], f"{field}.planned_duration_seconds")
     return result
+
+
+def plan_evidence_density(policy, shots, criteria, *, risk_policy=None):
+    """Set a per-beat cadence using planner risk, actual pacing and critical checks."""
+    risk_policy = risk_policy or policy
+    hints = {hint["shot_id"]: hint for hint in risk_policy.get("shot_density", [])}
+    focus = set(policy.get("focus_shot_ids", [])) | set(risk_policy.get("focus_shot_ids", []))
+    density = []
+    for shot in shots:
+        shot_id = shot["shot_id"]
+        critical = sum(item.get("critical") is True and item.get("shot_id") == shot_id for item in criteria)
+        fast = shot.get("pacing") in {"dynamic", "transformation", "bridge"} or shot.get("beat_function") == "transition"
+        risk = shot_id in focus
+        interval = 1.25 if fast else 2 if risk or critical >= 2 else 4
+        reason = "Fast action or transition" if fast else "Planned risk or multiple critical checks" if interval == 2 else "Baseline coverage"
+        hint = hints.get(shot_id)
+        if hint and hint["target_interval_seconds"] <= interval:
+            interval = hint["target_interval_seconds"]
+            reason = hint["reason"] or reason
+        density.append({"shot_id": shot_id, "target_interval_seconds": interval, "reason": reason})
+    return {**policy, "shot_density": density, "max_frames": MAX_EVIDENCE_FRAMES}
 
 
 def _time_value(value: Any, field: str) -> float:

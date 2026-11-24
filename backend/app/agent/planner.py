@@ -126,6 +126,7 @@ Required JSON schema:
   "evidence_sampling": {
     "focus_shot_ids": ["S1"],
     "critical_moments": [{"shot_id": "S1", "reason": "what must be visibly verified"}],
+    "shot_density": [{"shot_id": "S1", "target_interval_seconds": 1.5, "reason": "the concrete visual risk needing this cadence"}],
     "rationale": "why these moments deserve denser visual evidence"
   },
   "generation_spec": {
@@ -146,7 +147,7 @@ Use `production_direction` to supply only execution defaults the user did not sp
 
 Plan in this exact order: first choose the minimum number of semantic beats; then classify their editorial pacing; then decide whether they honestly fit a single 4–30 second clip. Use exactly one beat only when the brief has one continuous visual state or one uninterrupted action, with no required setup-to-outcome change, transition, reaction, comparison, or continuity claim. Otherwise separate the distinct visible states into the minimum readable number of beats. Do NOT assign numerical beat durations: the deterministic timing policy will derive provider seconds from your semantic pacing classes. Valid beat_function/pacing combinations are establish: glimpse|readable; action: simple|dynamic|transformation; payoff: hold|reaction; detail: glimpse|readable|hold; transition: bridge|dynamic. A simple reveal normally becomes about 4–6 seconds; a dynamic action about 4–8 seconds; a story with visible state changes gets more beats only if each remains readable. These are outcomes of the storyboard, not defaults. If the user explicitly requests 4–30 seconds, preserve it; the system will redistribute that fixed total around the key action. If the brief needs independent locations, time jumps, or more than 30 seconds of legible action, set production_strategy.mode=needs_segmentation and explain why. Do not pretend that compression solves that problem. In needs_segmentation mode still provide the high-level beats, but the current single-clip generator will not run.
 
-generation_spec.duration_seconds is a provisional valid integer from 4 to 30; the deterministic timing policy will replace it with the derived total for a single-clip plan. Each critical_moment must name visible evidence within that beat. Create 1–4 acceptance_criteria for each planned beat. Each criterion must be atomic, visually verifiable, and only mark critical=true for a requirement that would make the video unusable if it failed. Choose aspect_ratio from 16:9, 9:16, or 1:1 only. Choose quality_target as standard or high only. Use an integer from 0 to 3 for recommended_iterations. Output JSON."""
+generation_spec.duration_seconds is the integer clip duration from 4 to 30. Preserve the user's requested duration and keep video_prompt consistent with this total. The app allocates individual beat durations. Each critical_moment must name visible evidence within that beat. Create 1–4 acceptance_criteria for each planned beat. Each criterion must be atomic, visually verifiable, and only mark critical=true for a requirement that would make the video unusable if it failed. Choose aspect_ratio from 16:9, 9:16, or 1:1 only. Choose quality_target as standard or high only. Use an integer from 0 to 3 for recommended_iterations. Output JSON."""
         payload = {
             "creative_brief": prompt,
             "available_video_models":model_cards(),
@@ -160,6 +161,7 @@ generation_spec.duration_seconds is a provisional valid integer from 4 to 30; th
         language = "English" if (enriched_context or {}).get("ui_language") == "en" else "Simplified Chinese"
         system += f"\nInterface language: {language}. All user-visible prose must use this language, even for a mixed-language brief. Preserve model names, necessary technical terms (such as gap), quoted names and phrases supplied by the user (such as mean girl). Do not mix in English narration when the interface is Chinese. Keep schema keys, IDs and enum values unchanged."
         system += "\nApply ALL user_imported_skills together with the complete creative_brief, references and accepted decisions BEFORE writing the plan. Explicit user instructions override Skill defaults. In this SAME response include video_prompt: the complete production prompt to send to the video model, with actual dialogue in the requested spoken language, performance, camera, timing, sound and continuity. Include skill_application: a list of concrete applied Skill steps and results. These fields are the full creative work, not a pass/fail claim. Also return video_model_recommendation: {model_id, reason}, choosing from available_video_models for this brief; prefer the user's explicit model choice. Do not ask again for facts or decisions already supplied; make minor execution choices yourself. Do not require independent audits or approval of Skill use. Dialogue condensation is allowed when accepted decisions authorize it; preserve meaning rather than literal wording in that case. UI language does not change the requested spoken language."
+        system += "\nSet evidence_sampling.shot_density per beat according to its concrete visual risks. Use a shorter interval for brief gestures, physical contact, fast changes, transitions or tight continuity checks. Use a longer interval for a sustained static state. Intervals are in seconds from 0.4 to 8; avoid proposing more still frames as a way to verify spoken words or lip sync."
         parsed = self._request_json(system, payload, 7500)
         return self._to_spec(prompt, reference_asset, parsed, enriched_context)
 
@@ -181,6 +183,8 @@ generation_spec.duration_seconds is a provisional valid integer from 4 to 30; th
         risks = self._text_list(parsed.get("risk_forecast"), "risk_forecast", 2, 4)
         provisional_generation_spec = validate_generation_spec(parsed.get("generation_spec"))
         production_strategy = validate_production_strategy(parsed.get("production_strategy"))
+        video_prompt = parsed.get("video_prompt")
+        video_prompt = video_prompt.strip() if isinstance(video_prompt, str) else ""
         raw_shots = parsed.get("shots")
         if not isinstance(raw_shots, list) or not 1 <= len(raw_shots) <= 6:
             raise ValueError("Doubao Seed 2.1 Pro plan must contain 1 to 6 storyboard beats")
@@ -198,7 +202,9 @@ generation_spec.duration_seconds is a provisional valid integer from 4 to 30; th
             })
         duration_plan = build_duration_plan(
             shots,
-            explicit_duration_seconds=requested_duration_seconds(prompt),
+            explicit_duration_seconds=(enriched_context or {}).get("resolved_requirements", {}).get("duration_seconds")
+            or requested_duration_seconds(prompt),
+            model_duration_seconds=provisional_generation_spec["duration_seconds"] if video_prompt else None,
             strategy=production_strategy,
             rationale=production_strategy["reason"],
         )
@@ -215,6 +221,7 @@ generation_spec.duration_seconds is a provisional valid integer from 4 to 30; th
         else:
             # This value is never submitted: create_project_state gates the
             # single-clip Act step when the strategy requires segmentation.
+            production_strategy = {"mode": duration_plan["mode"], "reason": duration_plan["reason"]}
             shots = [dict(shot) for shot in shots]
             generation_spec = provisional_generation_spec
         allowed_shot_ids = {shot["shot_id"] for shot in shots}
@@ -243,7 +250,7 @@ generation_spec.duration_seconds is a provisional valid integer from 4 to 30; th
             production_strategy=production_strategy,
             production_direction=production_direction,
             acceptance_criteria=acceptance_criteria,
-            enriched_context={**(enriched_context or {}),'creative_questions':clarification_questions,'video_prompt':parsed.get('video_prompt',''),'skill_application':parsed.get('skill_application',[]),'video_model_recommendation':parsed.get('video_model_recommendation',{})},
+            enriched_context={**(enriched_context or {}),'creative_questions':clarification_questions,'video_prompt':video_prompt,'skill_application':parsed.get('skill_application',[]),'video_model_recommendation':parsed.get('video_model_recommendation',{})},
             planning_source="doubao_seed_2_1_pro",
             planning_notice="Doubao Seed 2.1 Pro converted this brief into a structured control plan. Review the budget before approving it.",
         )

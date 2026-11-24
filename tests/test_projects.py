@@ -167,3 +167,37 @@ class ProjectHTTPTests(unittest.TestCase):
         self.assertEqual(continued['project_id'],first['project_id'])
         self.assertIn('改为黄昏',continued['creative_spec']['source_prompt'])
         self.assertEqual(len(self.request('/api/projects')[1]['projects']),2)
+
+    def test_delete_only_owned_projects_and_clears_active_snapshot(self):
+        visitor = self.session()
+        _, archived = self.request('/api/reset', {'title': 'Archived'})
+        _, active = self.request('/api/reset', {'title': 'Active'})
+        archived_id, active_id = archived['project_id'], active['project_id']
+        other, _ = self.store.visitor('')
+        other_project = create_empty_state()
+        other_project.project_name = 'Other session'
+        self.store.save(other, other_project)
+
+        status, _ = self.request('/api/projects/delete', {'project_id': other_project.project_id})
+        self.assertEqual(status, 400)
+        self.assertEqual(Projects(self.store).list(other)['projects'][0]['id'], other_project.project_id)
+
+        with self.store.connect() as db:
+            db.execute("INSERT INTO review_translations VALUES (?, ?, 'cache', '{}')", (visitor, archived_id))
+        status, result = self.request('/api/projects/delete', {'project_id': archived_id})
+        self.assertEqual(status, 200)
+        self.assertEqual([p['id'] for p in result['projects']], [active_id])
+        self.assertEqual(result['active_project_id'], active_id)
+        self.assertEqual(self.request('/api/project-preview/' + archived_id)[0], 404)
+        self.assertEqual(self.request('/api/projects/open', {'project_id': archived_id})[0], 400)
+        with self.store.connect() as db:
+            self.assertEqual(db.execute("SELECT count(*) FROM review_translations").fetchone()[0], 0)
+
+        status, result = self.request('/api/projects/delete', {'project_id': active_id})
+        self.assertEqual(status, 200)
+        self.assertEqual(result['projects'], [])
+        self.assertNotEqual(result['active_project_id'], active_id)
+        self.assertEqual(self.store.load(visitor).project_id, result['active_project_id'])
+        self.assertEqual(self.request('/api/state')[1]['project_id'], result['active_project_id'])
+        self.assertEqual(self.request('/api/reset', {}, headers={'X-Project-ID': active_id})[0], 409)
+        self.assertEqual(self.request('/api/projects')[1]['projects'], [])

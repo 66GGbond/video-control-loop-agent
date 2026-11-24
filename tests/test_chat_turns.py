@@ -8,6 +8,16 @@ from tests import test_local_server as local
 
 
 class ChatTurnTests(unittest.TestCase):
+    def test_workflow_only_change_is_not_a_creative_revision(self):
+        state = create_demo_state('Original creative brief')
+        state.status = 'generating_video'
+        reply = {'intent': 'update', 'stop_after_generation': True}
+        with patch.dict(os.environ, {'ARK_API_KEY': 'offline'}), \
+             patch('backend.app.chat_turns.request_json', return_value=reply):
+            turn = decide(state, '视频生成完以后就中断agent流程，不需要进行后续的质检与修复')
+        self.assertEqual(turn['intent'], 'workflow')
+        self.assertTrue(turn['stop_after_generation'])
+
     def test_repeated_accepted_settings_do_not_reject_retry_or_planning(self):
         state=create_demo_state('需求');state.creative_spec.enriched_context['resolved_requirements']={'dialogue_edit_policy':'condense_preserve_meaning','character_reference_policy':'skip'}
         for intent,text in [('retry','继续'),('plan','开始生成创意规划'),('discuss','为什么这样安排')]:

@@ -27,6 +27,13 @@ _PACING_BY_FUNCTION = {
     "detail": {"glimpse", "readable", "hold"},
     "transition": {"bridge", "dynamic"},
 }
+_FUNCTION_ALIASES = {
+    "establishing": "establish",
+    "dialogue": "action",
+    "reaction": "payoff",
+    "reveal": "payoff",
+    "insert": "detail",
+}
 _INTRINSIC_SECONDS = {
     ("establish", "glimpse"): 1.5,
     ("establish", "readable"): 2.0,
@@ -99,6 +106,7 @@ def build_duration_plan(
     shots: Iterable[Dict[str, Any]],
     *,
     explicit_duration_seconds: int | None = None,
+    model_duration_seconds: int | None = None,
     source: str = "agent_inferred",
     strategy: Dict[str, str] | None = None,
     rationale: str = "",
@@ -116,13 +124,7 @@ def build_duration_plan(
     for index, (expected_id, shot) in enumerate(zip(shot_ids, raw)):
         if not isinstance(shot, dict) or shot.get("shot_id") != expected_id:
             raise ValueError("Duration planning requires ordered beat IDs S1 … S6")
-        function = str(shot.get("beat_function") or shot.get("function") or _default_function(index, len(raw))).strip().lower()
-        if function not in _PACING_BY_FUNCTION:
-            raise ValueError(f"{expected_id} has an unsupported beat_function")
-        pacing = str(shot.get("pacing") or _default_pacing(function, shot.get("intent"))).strip().lower()
-        if pacing not in _PACING_BY_FUNCTION[function]:
-            allowed = ", ".join(sorted(_PACING_BY_FUNCTION[function]))
-            raise ValueError(f"{expected_id} pacing must be one of: {allowed}")
+        function, pacing = _timing_labels(shot, index, len(raw))
         reason = shot.get("timing_reason")
         if not isinstance(reason, str) or not reason.strip():
             reason = _default_reason(function, pacing)
@@ -151,6 +153,11 @@ def build_duration_plan(
         total = explicit_duration_seconds
         source = "user_specified"
         allocation_reason = "The explicit duration is preserved; time is redistributed to keep the key action readable."
+    elif model_duration_seconds is not None:
+        if not MIN_SINGLE_CLIP_SECONDS <= model_duration_seconds <= MAX_SINGLE_CLIP_SECONDS:
+            raise ValueError(f"A single video clip must be {MIN_SINGLE_CLIP_SECONDS} to {MAX_SINGLE_CLIP_SECONDS} seconds")
+        total = model_duration_seconds
+        allocation_reason = "The total matches the complete video prompt; beat weights distribute time within the clip."
     else:
         if intrinsic_total > MAX_SINGLE_CLIP_SECONDS:
             return {
@@ -205,10 +212,7 @@ def duration_plan_from_timeline(shots: Iterable[Dict[str, Any]], total_duration_
     timeline = normalise_shot_timeline(raw, total_duration_seconds, strict=True)
     beats = []
     for index, shot in enumerate(timeline):
-        function = str(shot.get("beat_function") or _default_function(index, len(timeline))).lower()
-        pacing = str(shot.get("pacing") or _default_pacing(function, shot["intent"])).lower()
-        if pacing not in _PACING_BY_FUNCTION[function]:
-            pacing = _default_pacing(function, shot["intent"])
+        function, pacing = _timing_labels(shot, index, len(timeline))
         shot["beat_function"] = function
         shot["pacing"] = pacing
         shot["timing_reason"] = shot.get("timing_reason") or _default_reason(function, pacing)
@@ -254,6 +258,19 @@ def _default_function(index: int, count: int) -> str:
     if index == count - 1:
         return "payoff"
     return "action"
+
+
+def _timing_labels(shot: Dict[str, Any], index: int, count: int) -> tuple[str, str]:
+    """Map editorial labels to local timing weights without changing shot content."""
+    label = str(shot.get("beat_function") or shot.get("function") or "").strip().lower()
+    function = _FUNCTION_ALIASES.get(label, label)
+    if function not in _PACING_BY_FUNCTION:
+        function = _default_function(index, count)
+
+    pacing = str(shot.get("pacing") or "").strip().lower()
+    if pacing not in _PACING_BY_FUNCTION[function]:
+        pacing = "reaction" if label == "reaction" else _default_pacing(function, shot.get("intent"))
+    return function, pacing
 
 
 def _default_pacing(function: str, intent: Any) -> str:

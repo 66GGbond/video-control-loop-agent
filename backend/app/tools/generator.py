@@ -120,7 +120,8 @@ class ArkVideoGenerator:
         if prompt:
             output=spec.generation_contract.get('output_spec') or spec.generation_spec
             timeline=spec.generation_contract.get('shot_plan') or spec.shots
-            return (prompt + "\nCurrent output settings: " + json.dumps(output,ensure_ascii=False)
+            return (prompt + "\nUse the current output settings and timeline for timing, including where the earlier plan uses different timings."
+                    + "\nCurrent output settings: " + json.dumps(output,ensure_ascii=False)
                     + "\nCurrent timeline: " + json.dumps(timeline,ensure_ascii=False)
                     + "\nRepair changes: " + json.dumps(spec.generation_contract.get("repair_delta",{}),ensure_ascii=False)
                     + ArkVideoGenerator._character_binding(state))

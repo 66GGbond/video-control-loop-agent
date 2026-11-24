@@ -37,6 +37,15 @@ window.I18N_CATALOG = [
   ["No saved projects yet", "暂无历史项目"],
   ["Open project", "打开项目"],
   ["Rename project", "重命名项目"],
+  ["Continue editing", "继续编辑"],
+  ["Save", "保存"],
+  ["Loading project history…", "正在加载历史项目…"],
+  ["Project history could not load. Retrying…", "历史项目暂时加载失败，正在重试。"],
+  ["Rename", "重命名"],
+  ["Delete project", "删除项目"],
+  ["Project not found", "项目不存在"],
+  ["Project deleted.", "项目已删除。"],
+  ["This permanently removes the project from your workspace, including access to its conversation and versions.", "删除后，项目将从工作区移除，无法再打开其对话和版本。"],
   ["Project name", "项目名称"],
   ["Save project name", "保存项目名称"],
   ["Project preview unavailable", "项目预览暂不可用"],
@@ -304,38 +313,30 @@ window.I18N_CATALOG = [
     "Run the quality loop to see the Agent decision.",
     "运行质检闭环，查看 Agent 决策。"
   ],
-  [
-    "OBSERVATION LAYER",
-    "证据观察"
-  ],
-  [
-    "Bad Case evidence",
-    "问题案例与证据"
-  ],
-  [
-    "Observe",
-    "观察"
-  ],
-  [
-    "No observation yet.",
-    "暂无观察结果。"
-  ],
-  [
-    "PROJECT MEMORY",
-    "项目记忆"
-  ],
-  [
-    "Auditable decision log",
-    "可追踪决策日志"
-  ],
-  [
-    "Memory",
-    "记忆"
-  ],
-  [
-    "The log records Observe, Reason and Act as the agent works.",
-    "日志会记录 Agent 的观察、推理和执行过程。"
-  ],
+  ["Evidence observation", "证据观察"],
+  ["No observation yet.", "暂无观察结果。"],
+  ["View original report", "查看报告原文"],
+  ["Translating this review…", "正在翻译这份质检报告…"],
+  ["Report translation is unavailable. You can still view the original.", "暂时无法翻译质检报告。你仍可查看原文。"],
+  ["Retry report translation", "重试翻译"],
+  ["Audio interval · §0§–§1§s", "音频区间 · §0§–§1§ 秒"],
+  ["Music video", "音乐短片"],
+  ["Product / commercial", "产品与广告"],
+  ["Character / story", "人物与叙事"],
+  ["Controlled video", "控制计划评估"],
+  ["The brief requests an MV, music-artist, rap, or song-led visual sequence.", "创作需求以音乐、说唱或音乐人表演为主。"],
+  ["The brief or reference identifies a product, brand, packaging, or commercial deliverable.", "创作需求或参考素材明确了产品、品牌、包装或广告交付。"],
+  ["The brief contains a visible physical action or object interaction.", "创作需求包含可见的肢体动作或物体互动。"],
+  ["No product-led or motion-led signal dominates the approved creative plan.", "已确认的创作方案以人物与叙事为主。"],
+  ["The Agent selected this rubric from the approved brief and control plan.", "Agent 根据已确认的创作需求和控制计划选用此标准。"],
+  ["Subject consistency", "主体一致性"],
+  ["Subject / identity consistency", "主体与身份一致性"],
+  ["Temporal consistency", "时序一致性"],
+  ["Visual beat continuity", "画面节奏连贯性"],
+  ["Performance camera control", "表演镜头控制"],
+  ["Object integrity & visual artifacts", "物体完整性与画面瑕疵"],
+  ["Product continuity", "产品连贯性"],
+  ["Insufficient evidence", "证据不足"],
   [
     "01 · CREATIVE AGENT",
     "创作 Agent"

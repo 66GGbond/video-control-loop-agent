@@ -17,8 +17,10 @@ class DirectPlanningTests(unittest.TestCase):
     def test_one_planning_request_uses_skills_and_decisions_and_supplies_provider_prompt(self):
         fixture=create_demo_state('15秒英国爱情故事，英语对白').creative_spec
         parsed={'objective':fixture.goal,'immutable_constraints':fixture.immutable_character_attributes,
-                'shots':fixture.shots,'risk_forecast':fixture.risk_forecast,
-                'evidence_sampling':fixture.evidence_sampling,'generation_spec':fixture.generation_spec,
+                'shots':[{**shot, 'beat_function': 'new_editorial_label', 'pacing': 'slow'} for shot in fixture.shots],
+                'risk_forecast':fixture.risk_forecast,
+                'evidence_sampling':fixture.evidence_sampling,
+                'generation_spec':{**fixture.generation_spec, 'duration_seconds': 20},
                 'recommended_iterations':1,'planning_rationale':'关注人物动作和情感',
                 'acceptance_criteria':fixture.acceptance_criteria,
                 'video_prompt':'英国乡村厨房。Catherine says: "I am Heathcliff." Warm firelight; hold on her conflicted reaction.',
@@ -29,6 +31,9 @@ class DirectPlanningTests(unittest.TestCase):
         with patch.object(planner,'_request_json',return_value=parsed) as llm,patch.object(ContextEnrichmentAgent,'_request_json') as context_call:
             state=create_enriched_project_state(fixture.source_prompt,control_planner=planner,uploaded_skills=skills,creative_answers=answers,resolved_requirements={'character_reference_policy':'skip'})
         self.assertEqual(state.status,'planning_ready');llm.assert_called_once();context_call.assert_not_called()
+        self.assertEqual(state.creative_spec.generation_spec['duration_seconds'], 15)
+        self.assertEqual([shot['intent'] for shot in state.creative_spec.shots],
+                         [shot['intent'] for shot in fixture.shots])
         payload=llm.call_args.args[1]
         self.assertEqual(payload['user_imported_skills'],skills)
         self.assertEqual(payload['enriched_context']['creative_answers'],answers)
@@ -37,6 +42,9 @@ class DirectPlanningTests(unittest.TestCase):
         self.assertIn(parsed['video_prompt'],prompt)
         self.assertIn('Current output settings',prompt)
         self.assertNotIn('skill_execution',state.creative_spec.generation_contract)
+        without_explicit_duration = planner._to_spec('英国爱情故事，英语对白', None, parsed)
+        self.assertEqual(without_explicit_duration.generation_spec['duration_seconds'], 20)
+        self.assertEqual(without_explicit_duration.shots[-1]['end_seconds'], 20)
 
     def test_source_labels_and_six_sampling_focuses_are_not_execution_gates(self):
         from backend.app.agent.sampling import validate_evidence_sampling_policy

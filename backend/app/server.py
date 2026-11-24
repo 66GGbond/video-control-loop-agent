@@ -14,7 +14,7 @@ import uuid
 import threading
 import hashlib
 from functools import wraps
-from copy import copy
+from copy import copy, deepcopy
 from http.cookies import SimpleCookie
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -23,6 +23,7 @@ from urllib.parse import urlparse, parse_qs
 from urllib import request as urllib_request
 
 from .sessions import SessionStore
+from .review_translation import translate_review
 from .agent.context import requires_market_confirmation
 from .skill_execution import PREPARATION_STATES
 from .reference_imports import skill_files
@@ -31,7 +32,8 @@ from .chat_turns import respond as respond_to_question,recover_editing_question,
 from .tools.ark_responses import configured_model
 from .agent.planner import ArkControlPlanner
 from .agent.context import ContextEnrichmentAgent
-from .agent.generation_spec import validate_brief_duration
+from .agent.generation_spec import requested_duration_seconds, validate_brief_duration
+from .agent.sampling import MAX_EVIDENCE_FRAMES
 from .agent.prompt_compiler import PromptCompiler
 from .demo import create_empty_state, create_enriched_project_state, create_orchestrator, present
 from .domain.models import ProjectState, VersionReview
@@ -169,21 +171,25 @@ def visitor_request(method):
         self.read_only_archive = self.command == 'GET' and (path == '/api/projects' or path.startswith('/api/project-preview/'))
         if self.read_only_archive and urlparse("http://" + self.headers.get("Host", "")).hostname in {"localhost", "127.0.0.1", "::1"}:
             return method(self)
+        if urlparse("http://" + self.headers.get("Host", "")).hostname not in {"localhost", "127.0.0.1", "::1"}:
+            return self._json(403, {"error": "This application is available locally only."})
+        # Same-origin JSON requests only; reject cross-site form/fetch submissions.
+        if self.command == "POST":
+            origin = self.headers.get("Origin")
+            if (origin and urlparse(origin).netloc != self.headers.get("Host")) or self.headers.get("Sec-Fetch-Site") == "cross-site":
+                return self._json(403, {"error": "请求来源无效。"})
+            if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
+                return self._json(415, {"error": "请使用 JSON 请求。"})
+        if self.command == "POST" and path == "/api/review-translation":
+            self.read_only_archive = True
+            self.state = SESSIONS.load(self.visitor_id) or create_empty_state()
+            return method(self)
         lock = VISITOR_LOCKS[int(hashlib.sha256(self.visitor_id.encode()).hexdigest(), 16) % len(VISITOR_LOCKS)]
         with lock:
             self.state = SESSIONS.load(self.visitor_id) or create_empty_state()
             if self.command=='GET' and path=='/api/state':recover_editing_question(self.state)
-            if urlparse("http://" + self.headers.get("Host", "")).hostname not in {"localhost", "127.0.0.1", "::1"}:
-                return self._json(403, {"error": "This application is available locally only."})
-            # Same-origin JSON requests only; reject cross-site form/fetch submissions.
-            if self.command == "POST":
-                origin = self.headers.get("Origin")
-                if (origin and urlparse(origin).netloc != self.headers.get("Host")) or self.headers.get("Sec-Fetch-Site") == "cross-site":
-                    return self._json(403, {"error": "请求来源无效。"})
-                if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
-                    return self._json(415, {"error": "请使用 JSON 请求。"})
             expected = self.headers.get('X-Project-ID')
-            if expected and expected != self.state.project_id and path not in {'/api/projects','/api/projects/open','/api/projects/rename','/api/project-titles'}:
+            if expected and expected != self.state.project_id and path not in {'/api/projects','/api/projects/open','/api/projects/rename','/api/projects/delete','/api/project-titles'}:
                 return self._json(HTTPStatus.CONFLICT, {'error': '当前项目已在其他页面切换，请刷新后继续。'})
             SESSIONS.save(self.visitor_id, self.state)
             try:
@@ -243,6 +249,21 @@ class DemoHandler(SimpleHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         try:
+            if path == "/api/review-translation":
+                body = self._read_json()
+                language = body.get("language")
+                if language not in ("zh", "en"):
+                    return self._json(HTTPStatus.BAD_REQUEST, {"error": "Unsupported review language"})
+                if self.headers.get("X-Project-ID") != self.state.project_id:
+                    return self._json(HTTPStatus.CONFLICT, {"error": "Project has changed"})
+                review = next((item for item in self.state.version_reviews if item.version_id == body.get("version_id")), None)
+                if not review or not review.report:
+                    return self._json(HTTPStatus.NOT_FOUND, {"error": "Review unavailable"})
+                try:
+                    translations = translate_review(SESSIONS, self.visitor_id, self.state.project_id, review.report, language)
+                except (ValueError, OSError, TypeError, KeyError):
+                    return self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": "Review translation unavailable"})
+                return self._json(HTTPStatus.OK, {"translations": translations})
             if path=='/api/recover-last-command':
                 if characters.running(self.state,SESSIONS,self.visitor_id):raise ValueError('请等待当前图片任务完成。')
                 if not recover_last_command(self.state):raise ValueError('没有可安全恢复的指令。')
@@ -270,13 +291,44 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     record_reply(self.state,text,decision['reply']);return self._json(200,{**present(self.state),'conversation_only':True})
                 if intent=='brief' and self.state.status!='ready_for_brief':raise ValueError('已有项目中的新需求应作为修改处理。')
                 if decision.get('character_reference_policy')=='skip' and characters.running(self.state,SESSIONS,self.visitor_id):raise ValueError('人物图片请求已在处理中；请等待结果后再调整生产步骤。')
+                if intent == 'confirm_generation':
+                    duration = requested_duration_seconds(text)
+                    if duration is not None and self.state.status in {'planning_ready','awaiting_first_video','awaiting_repair_upload'}:
+                        configure_generation(self.state, {'duration_seconds': duration}, select_model=os.getenv('VIDEO_PROVIDER') == 'auto')
                 requirements=self.state.creative_spec.enriched_context.setdefault('resolved_requirements',{})
                 for field in ('dialogue_edit_policy','character_reference_policy'):
                     if decision.get(field):requirements[field]=decision[field]
                 if decision.get('character_reference_policy')=='skip':
                     characters.assess(self.state)
+                stop = decision.get('stop_after_generation')
+                if isinstance(stop, bool):
+                    requirements['stop_after_generation'] = stop
+                if intent == 'workflow':
+                    prior_status = self.state.status
+                    if stop is True and prior_status in {'generated_video_ready', 'ready_for_evaluation', 'repair_uploaded'} and self.state.current_video_asset:
+                        self.state.status = 'video_complete'
+                        if self.state.execution_mode == 'autopilot':
+                            self.state.autopilot_paused = True
+                    if stop is True:
+                        reply = '已设定：视频保存即结束，跳过质检和修复。' if language != 'en' else 'The workflow now stops when the video is saved.'
+                    elif stop is False:
+                        reply = '已恢复后续质检与修复。' if language != 'en' else 'Quality checks and repairs are enabled.'
+                        if self.state.status == 'video_complete':
+                            self.state.status = 'generated_video_ready'
+                            self.chat_action = 'retry_evidence'
+                    else:
+                        reply = '请说明视频生成后是结束流程，还是继续质检与修复。' if language != 'en' else 'Should the workflow end after generation or continue to quality checks and repairs?'
+                    record_reply(self.state, text, reply)
+                    return self._json(200, {**present(self.state), 'conversation_only': prior_status == self.state.status})
+                if intent in {'retry', 'confirm_quality'} and self.state.status in {'ready_for_evaluation', 'repair_uploaded'} and self.state.latest_report and (self.state.current_video_asset or {}).get('local_video_url'):
+                    review_reply = '正在对当前视频加密取样并重新质检。' if language != 'en' else 'Sampling more frames of the current video for a fresh review.'
+                    record_reply(self.state, text, review_reply)
+                    self.chat_action = 'recheck_quality'
+                    return self._json(200, present(self.state))
                 if intent in {'confirm_generation','confirm_quality'}:
                     if intent=='confirm_generation' and self.state.status in PREPARATION_STATES:
+                        if duration is not None:
+                            requirements['duration_seconds'] = duration
                         requirements['generation_requested']=True;path='/api/revise-brief';body={'instruction':text,'language':language}
                     else:
                         path='/api/confirm-generation';body={'message':text,**({'action':'quality'} if intent=='confirm_quality' else {})};self.chat_action='quality' if intent=='confirm_quality' else 'generate'
@@ -296,6 +348,18 @@ class DemoHandler(SimpleHTTPRequestHandler):
                 payload = self._read_json()
                 Projects(SESSIONS).rename(self.visitor_id,payload.get('project_id'),payload.get('title'))
                 return self._json(HTTPStatus.OK, Projects(SESSIONS).list(self.visitor_id))
+            if path == '/api/projects/delete':
+                project_id = self._read_json().get('project_id')
+                if not isinstance(project_id, str) or not project_id:
+                    raise ValueError('Project not found')
+                replacement = create_empty_state() if project_id == self.state.project_id else None
+                projects = Projects(SESSIONS)
+                projects.delete(self.visitor_id, project_id, replacement)
+                if replacement is not None:
+                    self.state = replacement
+                return self._json(HTTPStatus.OK, {
+                    **projects.list(self.visitor_id), 'active_project_id': self.state.project_id,
+                })
             if path == '/api/projects/open':
                 payload = self._read_json()
                 self.state, workspace = Projects(SESSIONS).open(self.visitor_id,payload.get('project_id'))
@@ -420,9 +484,14 @@ class DemoHandler(SimpleHTTPRequestHandler):
                     return self._json(400,{'error':'当前没有可开始生成的方案。'})
                 if self.state.creative_spec.character_reference_plan.get('status')=='awaiting_clarification':
                     return self._json(400,{'error':'请先回答当前对话中的问题。'})
-                from datetime import datetime,timezone
+                spec = self.state.creative_spec
+                skip = spec.enriched_context.get('resolved_requirements', {}).get('character_reference_policy') == 'skip'
+                if skip:
+                    reply = f"开始制作 {spec.generation_spec.get('duration_seconds', '')} 秒视频，跳过人物三视图。"
+                else:
+                    reply = '开始制作。我会先准备所需的人物参考图，再生成视频。'
                 self.state.conversation.extend([{'id':uuid.uuid4().hex,'role':'user','text':text},
-                    {'id':uuid.uuid4().hex,'role':'assistant','kind':'generation_started','text':'开始制作。我会先准备所需的人物参考图，再生成视频。'}])
+                    {'id':uuid.uuid4().hex,'role':'assistant','kind':'generation_started','text':reply}])
                 if self.state.status=='planning_ready':self.state.status='awaiting_first_video'
                 return self._json(200,present(self.state))
             if path == "/api/approve-plan":
@@ -537,7 +606,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
                         "payload": {"message": "User added a direction before first-version generation; Agent recompiled the control plan."},
                     }]
                     return self._json(HTTPStatus.OK, present(self.state))
-                if self.state.status == "published":
+                if self.state.status in {"published", "video_complete"}:
                     self.state = start_user_directed_revision(self.state, instruction, payload.get("language"))
                     record_exchange(self.state, instruction, previous)
                     return self._json(HTTPStatus.OK, present(self.state))
@@ -682,15 +751,18 @@ class DemoHandler(SimpleHTTPRequestHandler):
                         "local_video_url": f"/api/generated-video/{job.version_id}",
                         "frame_count": "0",
                     }
+                    stop = self.state.creative_spec.enriched_context.get('resolved_requirements', {}).get('stop_after_generation') is True
                     if review:
                         review.asset = self.state.current_video_asset.copy()
-                        review.status = "sampling_evidence"
-                    self.state.status = "generated_video_ready"
+                        review.status = "generation_complete" if stop else "sampling_evidence"
+                    self.state.status = "video_complete" if stop else "generated_video_ready"
+                    if stop and self.state.execution_mode == 'autopilot':
+                        self.state.autopilot_paused = True
                     self.state.history.append({
                         "at": "local-demo",
                         "phase": "act",
                         "event": "generation_completed",
-                        "payload": {"message": f"The video provider completed {job.version_id}; Agent is preparing visual evidence."},
+                        "payload": {"message": f"Video {job.version_id} was saved; workflow ended after generation." if stop else f"The video provider completed {job.version_id}; Agent is preparing visual evidence."},
                     })
                 else:
                     return self._generation_failed(job, review)
@@ -837,7 +909,28 @@ class DemoHandler(SimpleHTTPRequestHandler):
             if path == "/api/run-loop":
                 if self.state.status not in {"ready_for_evaluation", "repair_uploaded"}:
                     return self._json(HTTPStatus.BAD_REQUEST, {"error": "Upload or generate a first video version before evaluation"})
-                ORCHESTRATOR.run_once(self.state)
+                payload = self._read_json() if int(self.headers.get("Content-Length", 0)) else {}
+                if payload.get("reobserve") is True:
+                    if payload.get("version_id") != self.state.current_version_id:
+                        raise ValueError("The video version changed before the recheck.")
+                    current_asset = self.state.current_video_asset or {}
+                    if not current_asset.get("local_video_path"):
+                        raise ValueError("The saved video is unavailable for rechecking.")
+                    staged = deepcopy(self.state)
+                    frames = self._store_evaluation_frames(payload.get("frames"))
+                    try:
+                        staged.evaluation_frame_records = frames
+                        staged.current_video_asset["frame_count"] = str(len(frames))
+                        review = next((item for item in staged.version_reviews if item.version_id == staged.current_version_id), None)
+                        if review:
+                            review.asset = staged.current_video_asset.copy()
+                        ORCHESTRATOR.run_once(staged, reobserve=True)
+                    except Exception:
+                        self._discard_evaluation_frames(frames)
+                        raise
+                    self.state = staged
+                else:
+                    ORCHESTRATOR.run_once(self.state)
                 return self._json(HTTPStatus.OK, present(self.state))
             if path == "/api/reset":
                 payload=self._read_json();name=payload.get("title","")
@@ -879,7 +972,7 @@ class DemoHandler(SimpleHTTPRequestHandler):
             self.state.history.append({'phase':'conversation','event':'conversation_turn_understood','payload':self.chat_decision})
             data['history']=self.state.history;self.chat_decision_recorded=True
         if getattr(self,'chat_action',None) and 'creative_spec' in data:data['chat_action']=self.chat_action
-        if hasattr(self, "visitor_id") and not getattr(self, 'read_only_archive', False):
+        if hasattr(self, "state") and not getattr(self, 'read_only_archive', False):
             SESSIONS.save(self.visitor_id, self.state)
             if data.get('project_id') == self.state.project_id and 'creative_spec' in data:
                 with SESSIONS.connect() as db:
@@ -1103,8 +1196,8 @@ class DemoHandler(SimpleHTTPRequestHandler):
         raise ValueError("The current video version is invalid")
 
     def _store_evaluation_frames(self, raw_frames) -> list[dict[str, object]]:
-        if not isinstance(raw_frames, list) or not 3 <= len(raw_frames) <= 6:
-            raise ValueError("The browser must provide 3 to 6 sampled keyframes for visual evaluation")
+        if not isinstance(raw_frames, list) or not 3 <= len(raw_frames) <= MAX_EVIDENCE_FRAMES:
+            raise ValueError(f"Provide 3 to {MAX_EVIDENCE_FRAMES} sampled keyframes for visual evaluation")
         decoded: list[tuple[str, float, bytes, str, str]] = []
         for index, frame in enumerate(raw_frames, start=1):
             if not isinstance(frame, dict):

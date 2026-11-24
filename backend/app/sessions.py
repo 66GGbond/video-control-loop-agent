@@ -58,6 +58,9 @@ class SessionStore:
                     state TEXT NOT NULL, workspace TEXT NOT NULL, summary TEXT NOT NULL,
                     preview_mime TEXT NOT NULL, preview BLOB NOT NULL, preview_kind TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                     PRIMARY KEY(visitor_id,id));
+                CREATE TABLE IF NOT EXISTS review_translations (
+                    visitor_id TEXT NOT NULL, project_id TEXT NOT NULL, cache_key TEXT NOT NULL,
+                    data TEXT NOT NULL, PRIMARY KEY(visitor_id, project_id, cache_key));
                 CREATE TABLE IF NOT EXISTS image_tasks (visitor_id TEXT NOT NULL, node_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(visitor_id,node_id));
                 CREATE TABLE IF NOT EXISTS image_outputs (visitor_id TEXT NOT NULL, id TEXT NOT NULL, mime TEXT NOT NULL, data BLOB NOT NULL, PRIMARY KEY(visitor_id,id));
             """)

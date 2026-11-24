@@ -70,6 +70,20 @@ class Projects:
         if not changed:
             raise ValueError('项目不存在或不属于当前会话。')
 
+    def delete(self, visitor, ident, replacement=None):
+        from .sessions import encode
+
+        with self.store.connect() as db:
+            changed = db.execute(
+                "DELETE FROM projects WHERE visitor_id=? AND id=? AND kind='vcl'", (visitor, ident),
+            ).rowcount
+            if not changed:
+                raise ValueError("Project not found")
+            db.execute("DELETE FROM review_translations WHERE visitor_id=? AND project_id=?", (visitor, ident))
+            if replacement is not None:
+                db.execute("UPDATE visitors SET state=? WHERE id=?",
+                           (json.dumps(encode(replacement), ensure_ascii=False), visitor))
+
     def start_naming(self, visitor, language='zh'):
         with self.store.connect() as db:
             db.execute('BEGIN IMMEDIATE')
